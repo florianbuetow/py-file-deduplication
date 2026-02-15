@@ -1,0 +1,37 @@
+# Configuration for raw-deduplicator_v2 file scanner
+# All fields are required - no defaults are assumed
+
+# Directories to scan for files (absolute paths)
+paths:
+  - "/Volumes/WD20TB-2"
+
+# File extensions to look for (must include the dot)
+extensions:
+  - ".CRW"
+  - ".DNG"
+  - ".JPG"
+  - ".TIF"
+  - ".ARW"
+  - ".jpeg"
+  - ".raw"
+  - ".cr2"
+  - ".nef"
+
+# Whether extension matching is case sensitive
+case_sensitive: false
+
+# Whether to crawl subdirectories recursively
+recursive: true
+
+# Directory names to skip during traversal (exact match on directory name)
+skip_dirs:
+  - ".git"
+  - ".svn"
+  - ".hg"
+  - "__pycache__"
+  - "node_modules"
+  - ".venv"
+  - "_DELETE"
+
+# Path to the SQLite database file (relative to project root or absolute)
+database: "data/output/files.db"
