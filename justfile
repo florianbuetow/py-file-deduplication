@@ -3,6 +3,7 @@ _default:
     @just --list
 
 # Show help information
+[group('app')]
 help:
     @printf "\n"
     @clear
@@ -14,6 +15,7 @@ help:
     @printf "\n"
 
 # Initialize the development environment
+[group('setup')]
 init:
     @printf "\n"
     @printf "\033[0;34m=== Initializing Development Environment ===\033[0m\n"
@@ -27,6 +29,7 @@ init:
     @printf "\n"
 
 # Run the main application
+[group('app')]
 run:
     @printf "\n"
     @printf "\033[0;34m=== Running Application ===\033[0m\n"
@@ -34,6 +37,7 @@ run:
     @printf "\n"
 
 # Scan configured directories and populate the database with file entries
+[group('app')]
 scan:
     @printf "\n"
     @printf "\033[0;34m=== Scanning Files ===\033[0m\n"
@@ -41,6 +45,7 @@ scan:
     @printf "\n"
 
 # Compute MD5 and SHA-256 hashes for all unhashed files in the database
+[group('app')]
 hash:
     @printf "\n"
     @printf "\033[0;34m=== Hashing Files ===\033[0m\n"
@@ -48,6 +53,7 @@ hash:
     @printf "\n"
 
 # Destroy the virtual environment
+[group('setup')]
 destroy:
     @printf "\n"
     @printf "\033[0;34m=== Destroying Virtual Environment ===\033[0m\n"
@@ -56,6 +62,7 @@ destroy:
     @printf "\n"
 
 # Check code style and formatting (read-only)
+[group('quality')]
 code-style:
     @printf "\n"
     @printf "\033[0;34m=== Checking Code Style ===\033[0m\n"
@@ -67,6 +74,7 @@ code-style:
     @printf "\n"
 
 # Auto-fix code style and formatting
+[group('quality')]
 code-format:
     @printf "\n"
     @printf "\033[0;34m=== Formatting Code ===\033[0m\n"
@@ -78,6 +86,7 @@ code-format:
     @printf "\n"
 
 # Run static type checking with mypy
+[group('quality')]
 code-typecheck:
     @printf "\n"
     @printf "\033[0;34m=== Running Type Checks ===\033[0m\n"
@@ -87,6 +96,7 @@ code-typecheck:
     @printf "\n"
 
 # Run strict type checking with Pyright (LSP-based)
+[group('quality')]
 code-lspchecks:
     @printf "\n"
     @printf "\033[0;34m=== Running Pyright Type Checks ===\033[0m\n"
@@ -99,6 +109,7 @@ code-lspchecks:
     @printf "\n"
 
 # Run security checks with bandit
+[group('quality')]
 code-security:
     @printf "\n"
     @printf "\033[0;34m=== Running Security Checks ===\033[0m\n"
@@ -110,6 +121,7 @@ code-security:
     @printf "\n"
 
 # Check dependency hygiene with deptry
+[group('quality')]
 code-deptry:
     @printf "\n"
     @printf "\033[0;34m=== Checking Dependencies ===\033[0m\n"
@@ -120,6 +132,7 @@ code-deptry:
     @printf "\n"
 
 # Generate code statistics with pygount
+[group('quality')]
 code-stats:
     @printf "\n"
     @printf "\033[0;34m=== Code Statistics ===\033[0m\n"
@@ -131,6 +144,7 @@ code-stats:
     @printf "\n"
 
 # Check spelling in code and documentation
+[group('quality')]
 code-spell:
     @printf "\n"
     @printf "\033[0;34m=== Checking Spelling ===\033[0m\n"
@@ -140,6 +154,7 @@ code-spell:
     @printf "\n"
 
 # Scan dependencies for known vulnerabilities
+[group('quality')]
 code-audit:
     @printf "\n"
     @printf "\033[0;34m=== Scanning Dependencies for Vulnerabilities ===\033[0m\n"
@@ -149,6 +164,7 @@ code-audit:
     @printf "\n"
 
 # Run Semgrep static analysis
+[group('quality')]
 code-semgrep:
     @printf "\n"
     @printf "\033[0;34m=== Running Semgrep Static Analysis ===\033[0m\n"
@@ -158,6 +174,7 @@ code-semgrep:
     @printf "\n"
 
 # Run unit tests only (fast)
+[group('test')]
 test:
     @printf "\n"
     @printf "\033[0;34m=== Running Unit Tests ===\033[0m\n"
@@ -165,6 +182,7 @@ test:
     @printf "\n"
 
 # Run unit tests with coverage report and threshold check
+[group('test')]
 test-coverage: init
     @printf "\n"
     @printf "\033[0;34m=== Running Unit Tests with Coverage ===\033[0m\n"
@@ -180,6 +198,7 @@ test-coverage: init
     @printf "\n"
 
 # Run ALL validation checks (verbose)
+[group('ci')]
 ci:
     #!/usr/bin/env bash
     set -e
@@ -202,6 +221,7 @@ ci:
     printf "\n"
 
 # Run ALL validation checks silently (only show output on errors)
+[group('ci')]
 ci-quiet:
     #!/usr/bin/env bash
     set -e
