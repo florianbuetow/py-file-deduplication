@@ -36,6 +36,7 @@ This file provides guidance to AI agents and AI-assisted development tools when 
   - Correct: `printf "\033[0;32m✓ Done\033[0m\n"`
 
 ## Justfile Rules
+- **Every justfile recipe must start with `@printf "\n"` and end with `@printf "\n"`** to ensure clean visual separation between targets in terminal output
 - All Python execution in the justfile uses `uv run`, never `python` directly
 - Use `just init` to set up the project
 - Use `just run` to execute the main program
