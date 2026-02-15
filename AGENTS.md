@@ -20,11 +20,13 @@ This file provides guidance to AI agents and AI-assisted development tools when 
 
 ## Testing
 - After **every change** to the code, the tests must be executed
-- Always verify the program runs correctly with `just run` after modifications
+- Always verify the program runs correctly after modifications
+- **Always use justfile targets** for testing and running: `just test`, `just scan`, `just hash`, etc.
+- Prefer `just ci` or `just ci-quiet` for full validation over running individual tools manually
 
 ## Python Execution Rules
 - Python code must be executed **only** via `uv run ...`
-  - Example: `uv run src/main.py`
+  - Example: `uv run src/scan.py`
   - **Never** use: `python src/main.py` or `python3 src/main.py`
 - The virtual environment must be created and updated **only** via `uv sync`
   - **Never** use: `pip install`, `python -m pip`, or `uv pip`
@@ -34,12 +36,20 @@ This file provides guidance to AI agents and AI-assisted development tools when 
 - **Always use `printf` instead of `echo` for colored output** - `echo` does not reliably interpret ANSI escape sequences across shells
   - Wrong: `echo "\033[0;32m✓ Done\033[0m"`
   - Correct: `printf "\033[0;32m✓ Done\033[0m\n"`
+- **Never run scripts with the `bash` prefix** — always `chmod +x` the script and execute it directly
+  - Wrong: `bash scripts/reset-db.sh`
+  - Correct: `chmod +x scripts/reset-db.sh` then `./scripts/reset-db.sh`
 
 ## Justfile Rules
 - **Every justfile recipe must start with `@printf "\n"` and end with `@printf "\n"`** to ensure clean visual separation between targets in terminal output
 - All Python execution in the justfile uses `uv run`, never `python` directly
+- **Never inline Python code in the justfile** — if logic is needed, write a helper script in `scripts/` and call it from the recipe
+- **Never inline complex bash logic in the justfile** — keep recipes as thin runners that delegate to scripts in `scripts/`
+- **All helper scripts (bash or Python) go in `scripts/`** — never place them in the project root or other directories
+- **Always use `just <target>` to run tasks** — never run `scripts/*.sh` or `scripts/*.py` directly
 - Use `just init` to set up the project
-- Use `just run` to execute the main program
+- Use `just scan` to scan directories and populate the database
+- Use `just hash` to compute hashes for unhashed files
 - Use `just destroy` to remove the virtual environment
 - Use `just help` to see all available recipes with descriptions
 - Use `just` (with no arguments) to see a list of all recipes

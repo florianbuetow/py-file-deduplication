@@ -34,4 +34,4 @@ skip_dirs:
   - "_DELETE"
 
 # Path to the SQLite database file (relative to project root or absolute)
-database: "data/output/files.db"
+database: "data/files.db"

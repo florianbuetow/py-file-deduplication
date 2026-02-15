@@ -1,39 +1,8 @@
 # Default recipe: show available commands
 _default:
-    @just --list
-
-# Show help information
-[group('app')]
-help:
-    @printf "\n"
     @clear
     @printf "\n"
-    @printf "\033[0;34m=== raw-deduplicator_v2 ===\033[0m\n"
-    @printf "\n"
-    @printf "Available commands:\n"
-    @just --list
-    @printf "\n"
-
-# Initialize the development environment
-[group('setup')]
-init:
-    @printf "\n"
-    @printf "\033[0;34m=== Initializing Development Environment ===\033[0m\n"
-    @mkdir -p reports/coverage
-    @mkdir -p reports/security
-    @mkdir -p reports/pyright
-    @mkdir -p reports/deptry
-    @printf "Installing Python dependencies...\n"
-    @uv sync --all-extras
-    @printf "\033[0;32m✓ Development environment ready\033[0m\n"
-    @printf "\n"
-
-# Run the main application
-[group('app')]
-run:
-    @printf "\n"
-    @printf "\033[0;34m=== Running Application ===\033[0m\n"
-    @uv run src/main.py
+    @just --list --unsorted
     @printf "\n"
 
 # Scan configured directories and populate the database with file entries
@@ -52,6 +21,53 @@ hash:
     @uv run src/hash.py
     @printf "\n"
 
+# Delete the database (requires typing 'destroy' to confirm)
+[group('app')]
+reset:
+    @printf "\n"
+    @printf "\033[0;31m=== Database Reset ===\033[0m\n"
+    @printf "\n"
+    @./scripts/reset-db.sh
+    @printf "\n"
+
+# Show help information
+[group('info')]
+help:
+    @printf "\n"
+    @clear
+    @printf "\n"
+    @printf "\033[0;34m=== raw-deduplicator_v2 ===\033[0m\n"
+    @printf "\n"
+    @printf "Available commands:\n"
+    @just --list --unsorted
+    @printf "\n"
+
+# Generate code statistics with pygount
+[group('info')]
+code-stats:
+    @printf "\n"
+    @printf "\033[0;34m=== Code Statistics ===\033[0m\n"
+    @mkdir -p reports
+    @uv run pygount src/ tests/ scripts/ prompts/ *.md *.toml --suffix=py,md,txt,toml,yaml,yml --format=summary
+    @printf "\n"
+    @uv run pygount src/ tests/ scripts/ prompts/ *.md *.toml --suffix=py,md,txt,toml,yaml,yml --format=summary > reports/code-stats.txt
+    @printf "\033[0;32m✓ Report saved to reports/code-stats.txt\033[0m\n"
+    @printf "\n"
+
+# Initialize the development environment
+[group('setup')]
+init:
+    @printf "\n"
+    @printf "\033[0;34m=== Initializing Development Environment ===\033[0m\n"
+    @mkdir -p reports/coverage
+    @mkdir -p reports/security
+    @mkdir -p reports/pyright
+    @mkdir -p reports/deptry
+    @printf "Installing Python dependencies...\n"
+    @uv sync --all-extras
+    @printf "\033[0;32m✓ Development environment ready\033[0m\n"
+    @printf "\n"
+
 # Destroy the virtual environment
 [group('setup')]
 destroy:
@@ -59,18 +75,6 @@ destroy:
     @printf "\033[0;34m=== Destroying Virtual Environment ===\033[0m\n"
     @rm -rf .venv
     @printf "\033[0;32m✓ Virtual environment removed\033[0m\n"
-    @printf "\n"
-
-# Check code style and formatting (read-only)
-[group('quality')]
-code-style:
-    @printf "\n"
-    @printf "\033[0;34m=== Checking Code Style ===\033[0m\n"
-    @uv run ruff check .
-    @printf "\n"
-    @uv run ruff format --check .
-    @printf "\n"
-    @printf "\033[0;32m✓ Style checks passed\033[0m\n"
     @printf "\n"
 
 # Auto-fix code style and formatting
@@ -83,6 +87,18 @@ code-format:
     @uv run ruff format .
     @printf "\n"
     @printf "\033[0;32m✓ Code formatted\033[0m\n"
+    @printf "\n"
+
+# Check code style and formatting (read-only)
+[group('quality')]
+code-style:
+    @printf "\n"
+    @printf "\033[0;34m=== Checking Code Style ===\033[0m\n"
+    @uv run ruff check .
+    @printf "\n"
+    @uv run ruff format --check .
+    @printf "\n"
+    @printf "\033[0;32m✓ Style checks passed\033[0m\n"
     @printf "\n"
 
 # Run static type checking with mypy
@@ -131,18 +147,6 @@ code-deptry:
     @printf "\033[0;32m✓ Dependency checks passed\033[0m\n"
     @printf "\n"
 
-# Generate code statistics with pygount
-[group('quality')]
-code-stats:
-    @printf "\n"
-    @printf "\033[0;34m=== Code Statistics ===\033[0m\n"
-    @mkdir -p reports
-    @uv run pygount src/ tests/ scripts/ prompts/ *.md *.toml --suffix=py,md,txt,toml,yaml,yml --format=summary
-    @printf "\n"
-    @uv run pygount src/ tests/ scripts/ prompts/ *.md *.toml --suffix=py,md,txt,toml,yaml,yml --format=summary > reports/code-stats.txt
-    @printf "\033[0;32m✓ Report saved to reports/code-stats.txt\033[0m\n"
-    @printf "\n"
-
 # Check spelling in code and documentation
 [group('quality')]
 code-spell:
@@ -153,16 +157,6 @@ code-spell:
     @printf "\033[0;32m✓ Spelling checks passed\033[0m\n"
     @printf "\n"
 
-# Scan dependencies for known vulnerabilities
-[group('quality')]
-code-audit:
-    @printf "\n"
-    @printf "\033[0;34m=== Scanning Dependencies for Vulnerabilities ===\033[0m\n"
-    @uv run pip-audit
-    @printf "\n"
-    @printf "\033[0;32m✓ No known vulnerabilities found\033[0m\n"
-    @printf "\n"
-
 # Run Semgrep static analysis
 [group('quality')]
 code-semgrep:
@@ -171,6 +165,16 @@ code-semgrep:
     @uv run semgrep --config config/semgrep/ --error src
     @printf "\n"
     @printf "\033[0;32m✓ Semgrep checks passed\033[0m\n"
+    @printf "\n"
+
+# Scan dependencies for known vulnerabilities
+[group('quality')]
+code-audit:
+    @printf "\n"
+    @printf "\033[0;34m=== Scanning Dependencies for Vulnerabilities ===\033[0m\n"
+    @uv run pip-audit
+    @printf "\n"
+    @printf "\033[0;32m✓ No known vulnerabilities found\033[0m\n"
     @printf "\n"
 
 # Run unit tests only (fast)
@@ -225,6 +229,7 @@ ci:
 ci-quiet:
     #!/usr/bin/env bash
     set -e
+    printf "\n"
     printf "\033[0;34m=== Running CI Checks (Quiet Mode) ===\033[0m\n"
     TMPFILE=$(mktemp)
     trap "rm -f $TMPFILE" EXIT
