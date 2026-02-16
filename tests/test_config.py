@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from raw_deduplicator_v2.config import ScannerConfig, load_config
+from app.config import ScannerConfig, load_config
 
 
 class TestLoadConfigSuccess:

@@ -2,9 +2,9 @@
 
 import pytest
 
-from raw_deduplicator_v2.config import ScannerConfig
-from raw_deduplicator_v2.database import count_total_files, open_database
-from raw_deduplicator_v2.scanner import scan_files
+from app.config import ScannerConfig
+from app.database import count_total_files, open_database
+from app.scanner import scan_files
 
 
 @pytest.fixture()

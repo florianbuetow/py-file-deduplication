@@ -4,11 +4,11 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from raw_deduplicator_v2.config import ScannerConfig, load_config
-from raw_deduplicator_v2.database import open_database
-from raw_deduplicator_v2.hasher import hash_files
-from raw_deduplicator_v2.scan_updater import scan_update
-from raw_deduplicator_v2.scanner import scan_files
+from app.config import ScannerConfig, load_config
+from app.database import open_database
+from app.hasher import hash_files
+from app.scan_updater import scan_update
+from app.scanner import scan_files
 
 
 def _resolve_config_and_db(project_root: Path) -> tuple[ScannerConfig, sqlite3.Connection, Path]:

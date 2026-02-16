@@ -2,8 +2,8 @@
 
 from unittest.mock import patch
 
-from raw_deduplicator_v2.database import count_total_files, insert_file, open_database
-from raw_deduplicator_v2.scan_updater import scan_update
+from app.database import count_total_files, insert_file, open_database
+from app.scan_updater import scan_update
 
 
 class TestScanUpdate:

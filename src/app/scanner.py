@@ -10,8 +10,8 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-from raw_deduplicator_v2.config import ScannerConfig
-from raw_deduplicator_v2.database import count_total_files, insert_file
+from app.config import ScannerConfig
+from app.database import count_total_files, insert_file
 
 
 def scan_files(config: ScannerConfig, conn: sqlite3.Connection) -> None:

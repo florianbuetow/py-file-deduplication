@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import yaml
 
-from raw_deduplicator_v2.cli import run_hash, run_scan, run_scan_update
-from raw_deduplicator_v2.database import count_total_files, count_unhashed_files
+from app.cli import run_hash, run_scan, run_scan_update
+from app.database import count_total_files, count_unhashed_files
 
 
 def _write_config(project_root, scan_dir, db_name="files.db"):

@@ -2,7 +2,7 @@
 
 import pytest
 
-from raw_deduplicator_v2.database import (
+from app.database import (
     count_total_files,
     count_unhashed_files,
     delete_files,

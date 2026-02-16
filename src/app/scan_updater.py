@@ -8,7 +8,7 @@ confirmation.
 import sqlite3
 from pathlib import Path
 
-from raw_deduplicator_v2.database import count_total_files, delete_files, iter_all_files
+from app.database import count_total_files, delete_files, iter_all_files
 
 
 def scan_update(conn: sqlite3.Connection, base_path: Path) -> None:

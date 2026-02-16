@@ -4,12 +4,12 @@ import hashlib
 
 import pytest
 
-from raw_deduplicator_v2.database import (
+from app.database import (
     count_unhashed_files,
     insert_file,
     open_database,
 )
-from raw_deduplicator_v2.hasher import hash_files
+from app.hasher import hash_files
 
 
 @pytest.fixture()

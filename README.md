@@ -16,7 +16,7 @@ raw-deduplicator_v2/
 ├── CLAUDE.md               # Claude Code compatibility (symlink to AGENTS.md)
 ├── README.md               # This file
 ├── src/                    # Source code
-│   └── raw_deduplicator_v2/   # Main package
+│   └── app/                   # Main package
 │       └── __init__.py     # Package initialization
 ├── main.py                 # Main entry point
 ├── tests/                  # Test files
