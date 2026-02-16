@@ -54,6 +54,9 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
+# Data
+data/
+
 # Reports
 reports/
 
