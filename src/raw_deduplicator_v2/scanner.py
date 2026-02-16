@@ -6,6 +6,7 @@ extensions, and inserts them into the SQLite database.
 
 import os
 import sqlite3
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -46,6 +47,7 @@ def scan_files(config: ScannerConfig, conn: sqlite3.Connection) -> None:
 
         inserted: int = 0
         skipped: int = 0
+        current_dir: str = ""
 
         for file_path in _crawl_directory(
             root=scan_root,
@@ -54,6 +56,14 @@ def scan_files(config: ScannerConfig, conn: sqlite3.Connection) -> None:
             recursive=config.recursive,
             skip_dirs=config.skip_dirs,
         ):
+            parent_rel: str = str(file_path.parent.relative_to(scan_root))
+            if parent_rel != current_dir:
+                current_dir = parent_rel
+                found: int = inserted + skipped
+                display_dir: str = current_dir if current_dir != "." else str(scan_root)
+                print(f"[{found} files found] Scanning ... {display_dir}")
+                sys.stdout.flush()
+
             rel_path: str = str(file_path.relative_to(scan_root))
             filename: str = file_path.name
             extension: str = file_path.suffix
@@ -86,6 +96,7 @@ def scan_files(config: ScannerConfig, conn: sqlite3.Connection) -> None:
         print(f"  Inserted: {inserted}, Already in DB: {skipped}")
 
     total_in_db: int = count_total_files(conn)
+
     print("\nScan complete.")
     print(f"  New files added: {total_inserted}")
     print(f"  Already in DB: {total_skipped}")

@@ -7,12 +7,38 @@ computes full-file MD5 and SHA-256 hashes, and updates the database.
 import hashlib
 import sqlite3
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from raw_deduplicator_v2.database import count_total_files, count_unhashed_files, iter_unhashed_files, update_hashes
+from raw_deduplicator_v2.database import count_total_files, count_unhashed_files, iter_unhashed_files, sum_unhashed_bytes, update_hashes
 
 _HASH_BUFFER_SIZE: int = 65536
+_GB: int = 1024 ** 3
+_MB: int = 1024 ** 2
+_KB: int = 1024
+
+
+def _format_size_single(size: int) -> str:
+    """Format a byte count with auto-selected unit."""
+    if size >= _GB:
+        return f"{int(size / _GB)} GB"
+    if size >= _MB:
+        return f"{int(size / _MB)} MB"
+    if size >= _KB:
+        return f"{int(size / _KB)} KB"
+    return f"{size} B"
+
+
+def _format_size_pair(done: int, total: int) -> str:
+    """Format a done/total byte pair with auto-selected unit on the total only."""
+    if total >= _GB:
+        return f"{int(done / _GB)}/{int(total / _GB)} GB"
+    if total >= _MB:
+        return f"{int(done / _MB)}/{int(total / _MB)} MB"
+    if total >= _KB:
+        return f"{int(done / _KB)}/{int(total / _KB)} KB"
+    return f"{done}/{total} B"
 
 
 def hash_files(conn: sqlite3.Connection, base_path: Path) -> None:
@@ -37,6 +63,10 @@ def hash_files(conn: sqlite3.Connection, base_path: Path) -> None:
     print(f"Already hashed: {already_hashed}")
     print(f"Files to hash: {unhashed_count}")
 
+    total_bytes: int = sum_unhashed_bytes(conn)
+    print(f"Bytes to hash: {_format_size_single(total_bytes)}")
+    print()
+
     if unhashed_count == 0:
         print("Nothing to hash.")
         return
@@ -44,17 +74,31 @@ def hash_files(conn: sqlite3.Connection, base_path: Path) -> None:
     hashed_count: int = 0
     failed_count: int = 0
     current: int = 0
+    bytes_processed: int = 0
+    start_time: float = time.monotonic()
 
     cursor: sqlite3.Cursor = iter_unhashed_files(conn)
 
     for row in cursor:
         file_id: int = row[0]
         rel_path: str = row[1]
+        file_size: int = row[2]
         full_path: Path = base_path / rel_path
 
         current = current + 1
         pct: float = (current * 100.0) / unhashed_count
-        print(f"[{current}/{unhashed_count}] ({pct:6.2f}%) {rel_path}")
+
+        eta_str: str = ""
+        files_done: int = current - 1
+        if files_done > 0:
+            elapsed: float = time.monotonic() - start_time
+            remaining_seconds: int = int(elapsed * (unhashed_count - files_done) / files_done)
+            eta_hours: int = remaining_seconds // 3600
+            eta_minutes: int = (remaining_seconds % 3600) // 60
+            eta_str = f" [ETA {eta_hours}h{eta_minutes:02d}m]"
+
+        size_str: str = f"[{_format_size_pair(bytes_processed, total_bytes)}]"
+        print(f"[{current}/{unhashed_count}] {size_str} [{pct:.2f}%]{eta_str} Hashing ... {rel_path}")
 
         try:
             md5_hex, sha256_hex = _compute_file_hashes(full_path)
@@ -74,6 +118,7 @@ def hash_files(conn: sqlite3.Connection, base_path: Path) -> None:
         )
 
         hashed_count = hashed_count + 1
+        bytes_processed = bytes_processed + file_size
 
         if hashed_count % 100 == 0:
             conn.commit()

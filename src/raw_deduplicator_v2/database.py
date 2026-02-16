@@ -107,6 +107,20 @@ def count_unhashed_files(conn: sqlite3.Connection) -> int:
     return row[0]
 
 
+def sum_unhashed_bytes(conn: sqlite3.Connection) -> int:
+    """Sum the total file_size of all unhashed files.
+
+    Args:
+        conn: An open SQLite connection.
+
+    Returns:
+        The total size in bytes of all files with NULL md5_hash.
+    """
+    cursor: sqlite3.Cursor = conn.execute("SELECT COALESCE(SUM(file_size), 0) FROM files WHERE md5_hash IS NULL")
+    row: tuple[int] = cursor.fetchone()
+    return row[0]
+
+
 def iter_unhashed_files(conn: sqlite3.Connection) -> sqlite3.Cursor:
     """Return a cursor over all unhashed file records.
 

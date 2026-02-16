@@ -147,6 +147,33 @@ class TestScanMissingPath:
         assert count_total_files(db_conn) == 0
 
 
+class TestScanProgressOutput:
+    def test_prints_file_count_and_current_folder(self, tmp_path, db_conn, capsys):
+        subdir = tmp_path / "photos"
+        subdir.mkdir()
+        (tmp_path / "a.jpg").write_text("data")
+        (subdir / "b.jpg").write_text("data")
+
+        config = _make_config(tmp_path)
+        scan_files(config=config, conn=db_conn)
+
+        captured = capsys.readouterr()
+        assert "[0 files found]" in captured.out
+        assert "[1 files found]" in captured.out
+
+    def test_prints_scanning_folder_name(self, tmp_path, db_conn, capsys):
+        subdir = tmp_path / "photos"
+        subdir.mkdir()
+        (subdir / "a.jpg").write_text("data")
+
+        config = _make_config(tmp_path)
+        scan_files(config=config, conn=db_conn)
+
+        captured = capsys.readouterr()
+        assert "Scanning" in captured.out
+        assert "photos" in captured.out
+
+
 class TestScanFileMetadata:
     def test_stores_filename_and_extension(self, tmp_path, db_conn):
         (tmp_path / "photo.jpg").write_text("some content")
