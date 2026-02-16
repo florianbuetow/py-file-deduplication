@@ -21,6 +21,14 @@ hash:
     @uv run src/hash.py
     @printf "\n"
 
+# Check all database entries against disk and remove missing files
+[group('app')]
+scan-update:
+    @printf "\n"
+    @printf "\033[0;34m=== Scan Update ===\033[0m\n"
+    @uv run src/scan_update.py
+    @printf "\n"
+
 # Delete the database (requires typing 'destroy' to confirm)
 [group('app')]
 reset:

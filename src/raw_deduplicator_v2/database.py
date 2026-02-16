@@ -160,3 +160,37 @@ def update_hashes(
         """,
         (md5_hash, sha256_hash, hashed_at, file_id),
     )
+
+
+def iter_all_files(conn: sqlite3.Connection) -> sqlite3.Cursor:
+    """Return a cursor over all file records.
+
+    Yields rows as (id, rel_path) for every file in the database.
+
+    Args:
+        conn: An open SQLite connection.
+
+    Returns:
+        A cursor iterating over (id, rel_path) tuples.
+    """
+    return conn.execute("SELECT id, rel_path FROM files ORDER BY id")
+
+
+def delete_files(conn: sqlite3.Connection, file_ids: list[int]) -> int:
+    """Delete file records by their IDs.
+
+    Args:
+        conn: An open SQLite connection.
+        file_ids: List of row IDs to delete.
+
+    Returns:
+        The number of rows deleted.
+    """
+    if not file_ids:
+        return 0
+    placeholders: str = ",".join("?" for _ in file_ids)
+    cursor: sqlite3.Cursor = conn.execute(
+        f"DELETE FROM files WHERE id IN ({placeholders})",  # nosec B608
+        file_ids,
+    )
+    return cursor.rowcount

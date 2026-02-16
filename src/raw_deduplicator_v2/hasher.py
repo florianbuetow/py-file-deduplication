@@ -14,8 +14,8 @@ from pathlib import Path
 from raw_deduplicator_v2.database import count_total_files, count_unhashed_files, iter_unhashed_files, sum_unhashed_bytes, update_hashes
 
 _HASH_BUFFER_SIZE: int = 65536
-_GB: int = 1024 ** 3
-_MB: int = 1024 ** 2
+_GB: int = 1024**3
+_MB: int = 1024**2
 _KB: int = 1024
 
 

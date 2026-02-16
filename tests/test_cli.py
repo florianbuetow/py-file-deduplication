@@ -1,10 +1,11 @@
-"""Tests for the CLI module (end-to-end scan + hash)."""
+"""Tests for the CLI module (end-to-end scan + hash + scan-update)."""
 
 import sqlite3
+from unittest.mock import patch
 
 import yaml
 
-from raw_deduplicator_v2.cli import run_hash, run_scan
+from raw_deduplicator_v2.cli import run_hash, run_scan, run_scan_update
 from raw_deduplicator_v2.database import count_total_files, count_unhashed_files
 
 
@@ -132,5 +133,38 @@ class TestEndToEnd:
 
         assert "photos/nested.jpg" in paths
         assert "root.jpg" in paths
+
+        conn.close()
+
+    def test_scan_update_removes_missing_files(self, tmp_path):
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        scan_dir = tmp_path / "files"
+        scan_dir.mkdir()
+
+        (scan_dir / "keep.jpg").write_bytes(b"keep")
+        (scan_dir / "delete.png").write_bytes(b"delete")
+
+        _write_config(project_root, scan_dir)
+
+        run_scan(project_root=project_root)
+
+        db_path = project_root / "data" / "files.db"
+        conn = sqlite3.connect(str(db_path))
+        assert count_total_files(conn) == 2
+        conn.close()
+
+        # Remove one file from disk
+        (scan_dir / "delete.png").unlink()
+
+        with patch("builtins.input", return_value="y"):
+            run_scan_update(project_root=project_root)
+
+        conn = sqlite3.connect(str(db_path))
+        assert count_total_files(conn) == 1
+
+        cursor = conn.execute("SELECT rel_path FROM files")
+        remaining = [row[0] for row in cursor.fetchall()]
+        assert remaining == ["keep.jpg"]
 
         conn.close()

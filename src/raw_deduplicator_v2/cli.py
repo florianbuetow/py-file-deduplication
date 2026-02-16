@@ -7,6 +7,7 @@ from pathlib import Path
 from raw_deduplicator_v2.config import ScannerConfig, load_config
 from raw_deduplicator_v2.database import open_database
 from raw_deduplicator_v2.hasher import hash_files
+from raw_deduplicator_v2.scan_updater import scan_update
 from raw_deduplicator_v2.scanner import scan_files
 
 
@@ -71,5 +72,31 @@ def run_hash(project_root: Path) -> None:
 
     try:
         hash_files(conn=conn, base_path=base_path)
+    finally:
+        conn.close()
+
+
+def run_scan_update(project_root: Path) -> None:
+    """Run the scan-update pass.
+
+    Loads config, opens the database, and checks all file records
+    against disk, removing entries for files that no longer exist.
+
+    Args:
+        project_root: Absolute path to the project root directory.
+    """
+    config, conn, db_path = _resolve_config_and_db(project_root)
+    print(f"Database: {db_path}")
+    print("")
+
+    if len(config.paths) != 1:
+        print("ERROR: Scan-update requires exactly one scan path to resolve relative paths.", file=sys.stderr)
+        conn.close()
+        sys.exit(1)
+
+    base_path: Path = Path(config.paths[0]).resolve()
+
+    try:
+        scan_update(conn=conn, base_path=base_path)
     finally:
         conn.close()
