@@ -124,6 +124,10 @@ module = ["tests.*"]
 disallow_untyped_defs = false
 check_untyped_defs = false
 
+[[tool.mypy.overrides]]
+module = ["simple_term_menu"]
+ignore_missing_imports = true
+
 [tool.coverage.run]
 source = ["src"]
 omit = [

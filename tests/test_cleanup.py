@@ -1,13 +1,9 @@
 """Tests for the cleanup module."""
 
-from pathlib import Path
-
 from app.cleanup import (
     DeletionPlan,
-    DeletionResult,
     DuplicateFile,
     FileDeletion,
-    FolderStats,
     build_duplicate_groups,
     compute_folder_stats,
     execute_deletions,

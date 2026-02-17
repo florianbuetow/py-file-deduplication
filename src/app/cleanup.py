@@ -224,28 +224,28 @@ def plan_deletions(
 
         if in_safe:
             surviving: str = sorted(in_safe, key=lambda f: f.rel_path)[0].rel_path
-            for dup_file in in_selected:
-                deletions.append(
-                    FileDeletion(
-                        file_id=dup_file.file_id,
-                        rel_path=dup_file.rel_path,
-                        file_size=dup_file.file_size,
-                        surviving_copy=surviving,
-                    )
+            deletions.extend(
+                FileDeletion(
+                    file_id=dup_file.file_id,
+                    rel_path=dup_file.rel_path,
+                    file_size=dup_file.file_size,
+                    surviving_copy=surviving,
                 )
+                for dup_file in in_selected
+            )
         else:
             sorted_files: list[DuplicateFile] = sorted(in_selected, key=lambda f: f.rel_path)
             protected_path: str = sorted_files[0].rel_path
             protected_paths.append(protected_path)
-            for dup_file in sorted_files[1:]:
-                deletions.append(
-                    FileDeletion(
-                        file_id=dup_file.file_id,
-                        rel_path=dup_file.rel_path,
-                        file_size=dup_file.file_size,
-                        surviving_copy=protected_path,
-                    )
+            deletions.extend(
+                FileDeletion(
+                    file_id=dup_file.file_id,
+                    rel_path=dup_file.rel_path,
+                    file_size=dup_file.file_size,
+                    surviving_copy=protected_path,
                 )
+                for dup_file in sorted_files[1:]
+            )
 
     total_bytes: int = sum(d.file_size for d in deletions)
 
@@ -361,7 +361,7 @@ def show_folder_menu(folder_stats: list[FolderStats]) -> list[str] | None:
         show_multi_select_hint=True,
     )
 
-    selected_indices: tuple[int, ...] | None = menu.show()
+    selected_indices: int | tuple[int, ...] | None = menu.show()
 
     if selected_indices is None:
         return None
