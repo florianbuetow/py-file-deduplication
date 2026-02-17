@@ -16,7 +16,7 @@ You configure which directories and file extensions to scan, then run a pipeline
 
 **Clean up** -- Interactive terminal menu ranks folders by duplicate count. Select which folders to clean, review a dry-run report showing exactly what will be deleted and where surviving copies live, then confirm. The tool never deletes the last copy of any file -- if all folders containing a file are selected, the alphabetically first copy is automatically protected.
 
-## Pipeline
+### Pipeline
 
 ```
 configure  -->  scan  -->  hash  -->  report  -->  cleanup
@@ -24,7 +24,7 @@ configure  -->  scan  -->  hash  -->  report  -->  cleanup
 
 Each stage is a separate command. You can inspect results between steps and re-run any stage safely.
 
-## Key Properties
+### Key Properties
 
 - **Incremental** -- Scan detects new and removed files. Hash only processes files that haven't been hashed yet. No wasted work on re-runs.
 - **Safe deletion** -- Last-copy protection guarantees at least one copy of every file is always preserved. Dry-run report before any file is touched.
@@ -32,73 +32,7 @@ Each stage is a separate command. You can inspect results between steps and re-r
 - **Dual-hash verification** -- Files are matched by size + MD5 + SHA-256. False positives are effectively impossible.
 - **Configuration-driven** -- Works with any file type. Extensions, directories, and exclusions are all configured in YAML.
 
-## Usage
-
-### Configuration
-
-Create a `config.yaml` in your project root:
-
-```yaml
-paths:
-  - "/Volumes/Photos"
-
-extensions:
-  - ".CR3"
-  - ".ARW"
-  - ".DNG"
-  - ".JPG"
-
-case_sensitive: false
-recursive: true
-
-skip_dirs:
-  - ".git"
-  - "__pycache__"
-  - "_DELETE"
-
-database: "data/files.db"
-```
-
-All fields are required.
-
-### Commands
-
-```bash
-just scan          # Scan directories, add new files, remove stale entries
-just hash          # Compute hashes for unhashed files
-just duplicates    # Report duplicate groups and reclaimable space
-just cleanup       # Interactive folder-based duplicate removal
-just reset         # Delete the database (requires confirmation)
-```
-
-### Interactive Cleanup
-
-`just cleanup` presents folders ranked by duplicate count:
-
-```
-Select folders to remove duplicates from (Space to toggle, Enter to confirm):
-[ ] trip-backup/photos/     (247 duplicates, 12.50 GB)
-[ ] old-drive/raw/          (183 duplicates, 8.30 GB)
-[ ] copies/2024/            ( 42 duplicates, 1.70 GB)
-```
-
-After selecting, a dry-run report shows what will happen:
-
-```
-Files to delete (2 folders selected):
-
-  trip-backup/photos/IMG_001.CR3  (25.50 MB)  -- kept in: raw/2024/IMG_001.CR3
-  trip-backup/photos/IMG_002.CR3  (25.10 MB)  -- kept in: raw/2024/IMG_002.CR3
-  ...
-
-  Total: 247 files, 12.50 GB
-
-Proceed with deletion? [y/N]
-```
-
-Nothing is deleted until you type `y`.
-
-## Getting Started
+## Installation
 
 ### Prerequisites
 
@@ -109,28 +43,181 @@ Nothing is deleted until you type `y`.
 ### Setup
 
 ```bash
+git clone https://github.com/youruser/py-file-deduplication.git
+cd py-file-deduplication
 just init
 ```
 
-## Development
+## Configuration
 
-### Code Quality
+Create a `config.yaml` in the project root. All fields are required -- the tool does not assume any defaults.
 
-```bash
-just ci          # Run all 11 validation checks (verbose)
-just ci-quiet    # Same, but silent unless something fails
+```yaml
+# Directories to scan (absolute paths)
+paths:
+  - "/Volumes/Photos"
+
+# File extensions to match (must include the dot)
+extensions:
+  - ".CR3"
+  - ".ARW"
+  - ".DNG"
+  - ".JPG"
+
+# Whether extension matching is case sensitive
+case_sensitive: false
+
+# Whether to crawl subdirectories
+recursive: true
+
+# Directory names to skip during traversal
+skip_dirs:
+  - ".git"
+  - "__pycache__"
+  - "_DELETE"
+
+# Path to the SQLite database file (relative to project root or absolute)
+database: "data/files.db"
 ```
 
-The CI pipeline includes: formatting and linting (ruff), type checking (mypy + pyright), security scanning (bandit + semgrep), dependency auditing, and spell checking.
+## Example Workflow
 
-### Testing
+### 1. Scan directories
 
 ```bash
-just test            # Run all tests
-just test-coverage   # Run with coverage report
+just scan
 ```
 
-The test suite includes unit tests for every module and end-to-end tests that create real files on disk, run the full scan/hash/cleanup pipeline, and verify both disk and database state after deletion.
+```
+Scanning: /Volumes/Photos
+[1842 files found] Scanning ... 2024/vacation
+  Inserted: 1842, Already in DB: 0
+
+Scan complete.
+  New files added: 1842
+  Already in DB: 0
+  Total files in database: 1842
+```
+
+### 2. Compute hashes
+
+```bash
+just hash
+```
+
+```
+Total files in database: 1842
+Already hashed: 0
+Files to hash: 1842
+Bytes to hash: 48 GB
+
+[1/1842] [0/48 GB] [0.05%] Hashing ... 2024/vacation/IMG_001.CR3
+[2/1842] [0/48 GB] [0.11%] [ETA 2h14m] Hashing ... 2024/vacation/IMG_002.CR3
+...
+```
+
+Interrupt at any time. Next run picks up where you left off.
+
+### 3. Find duplicates
+
+```bash
+just duplicates
+```
+
+```
+Total hashed files analyzed: 1842
+Duplicate files found: 430
+Duplicate groups: 186
+
+Distribution:
+  172 groups with 2 copies each
+  14 groups with 3 copies each
+
+Reclaimable space: 12.50 GB
+```
+
+### 4. Clean up interactively
+
+```bash
+just cleanup
+```
+
+```
+Analyzing duplicate files by folder...
+Found 186 duplicate groups across 12 folders.
+
+Select folders to remove duplicates from (Space to toggle, Enter to confirm):
+[ ] trip-backup/photos/     (247 duplicates, 12.50 GB)
+[ ] old-drive/raw/          (183 duplicates, 8.30 GB)
+[ ] copies/2024/            ( 42 duplicates, 1.70 GB)
+```
+
+Select folders with Space, press Enter, review the dry-run report:
+
+```
+Files to delete (1 folders selected):
+
+  trip-backup/photos/IMG_001.CR3  (25.50 MB)  -- kept in: raw/2024/IMG_001.CR3
+  trip-backup/photos/IMG_002.CR3  (25.10 MB)  -- kept in: raw/2024/IMG_002.CR3
+  ...
+
+  Total: 247 files, 12.50 GB
+
+Proceed with deletion? [y/N]
+```
+
+Type `y` to confirm. Files are deleted from disk and removed from the database.
+
+## Contributing
+
+### Development Setup
+
+```bash
+just init          # Install all dependencies including dev tools
+just test          # Run the test suite
+just ci-quiet      # Run all 11 validation checks
+```
+
+### Running Checks
+
+| Command | What it does |
+|---------|-------------|
+| `just test` | Run all tests (pytest) |
+| `just test-coverage` | Run tests with coverage report |
+| `just code-format` | Auto-fix formatting (ruff) |
+| `just code-style` | Check formatting without modifying (ruff) |
+| `just code-typecheck` | Type checking (mypy) |
+| `just code-lspchecks` | Strict type checking (pyright) |
+| `just code-security` | Security scan (bandit) |
+| `just code-semgrep` | Custom static analysis rules |
+| `just code-deptry` | Dependency hygiene |
+| `just code-spell` | Spell checking |
+| `just code-audit` | Dependency vulnerability scan |
+| `just ci` | Run all of the above (verbose) |
+| `just ci-quiet` | Run all of the above (silent, fail-fast) |
+
+### Database Schema
+
+The tool uses a single SQLite database with WAL journal mode. One table, three indexes:
+
+```sql
+CREATE TABLE files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL,           -- base filename (e.g., "IMG_001.CR3")
+    rel_path TEXT NOT NULL UNIQUE,    -- path relative to scan root
+    extension TEXT NOT NULL,          -- file extension including dot
+    md5_hash TEXT,                    -- NULL until hashed
+    sha256_hash TEXT,                 -- NULL until hashed
+    file_size INTEGER NOT NULL,       -- size in bytes
+    hashed_at TEXT                    -- ISO-8601 timestamp, NULL until hashed
+);
+
+CREATE INDEX idx_files_md5_hash ON files (md5_hash);
+CREATE INDEX idx_files_sha256_hash ON files (sha256_hash);
+CREATE INDEX idx_files_file_size ON files (file_size);
+```
+
+Duplicates are identified by grouping on `(file_size, md5_hash, sha256_hash)`. The `rel_path` UNIQUE constraint prevents the same file from being inserted twice.
 
 ### Project Structure
 
@@ -146,10 +233,42 @@ src/
     scan_updater.py  # Stale entry detection
     scanner.py       # Directory crawling and file discovery
 tests/
-  test_cleanup.py       # Cleanup unit tests
-  test_cleanup_e2e.py   # End-to-end tests with real files
-  test_config.py        # Config loading tests
+  test_cleanup.py       # Cleanup unit tests (21 tests)
+  test_cleanup_e2e.py   # End-to-end tests with real files on disk (5 tests)
+  test_config.py        # Config loading and validation tests
   test_database.py      # Database operation tests
   test_hasher.py        # Hasher tests
   test_scanner.py       # Scanner tests
 ```
+
+### Dev Notes
+
+- All Python execution uses `uv run`, never `python` directly
+- All tasks use `just <target>`, never running scripts directly
+- The test suite includes end-to-end tests that create real files on disk, run the full scan/hash/cleanup pipeline, and verify both disk and database state after deletion
+- `simple-term-menu` is used for the interactive TUI (lazy-imported only when a terminal is available)
+- The cleanup module exposes analysis and deletion functions separately from the TUI, so tests can exercise the full pipeline without needing terminal interaction
+
+## License
+
+MIT License
+
+Copyright (c) 2026
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
