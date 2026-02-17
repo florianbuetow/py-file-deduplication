@@ -4,8 +4,10 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from app.cleanup import run_cleanup_interactive
 from app.config import ScannerConfig, load_config
 from app.database import open_database
+from app.duplicates import find_duplicates
 from app.hasher import hash_files
 from app.scan_updater import scan_update
 from app.scanner import scan_files
@@ -98,5 +100,50 @@ def run_scan_update(project_root: Path) -> None:
 
     try:
         scan_update(conn=conn, base_path=base_path)
+    finally:
+        conn.close()
+
+
+def run_duplicates(project_root: Path) -> None:
+    """Run the duplicate file finder.
+
+    Loads config, opens the database, and identifies duplicate files
+    based on matching file size, MD5, and SHA-256 hashes.
+
+    Args:
+        project_root: Absolute path to the project root directory.
+    """
+    _config, conn, db_path = _resolve_config_and_db(project_root)
+    print(f"Database: {db_path}")
+    print("")
+
+    try:
+        find_duplicates(conn=conn)
+    finally:
+        conn.close()
+
+
+def run_cleanup(project_root: Path) -> None:
+    """Run the interactive duplicate cleanup.
+
+    Loads config, opens the database, and launches the interactive
+    TUI for selecting folders and removing duplicate files.
+
+    Args:
+        project_root: Absolute path to the project root directory.
+    """
+    config, conn, db_path = _resolve_config_and_db(project_root)
+    print(f"Database: {db_path}")
+    print("")
+
+    if len(config.paths) != 1:
+        print("ERROR: Cleanup requires exactly one scan path to resolve relative paths.", file=sys.stderr)
+        conn.close()
+        sys.exit(1)
+
+    base_path: Path = Path(config.paths[0]).resolve()
+
+    try:
+        run_cleanup_interactive(conn=conn, base_path=base_path)
     finally:
         conn.close()

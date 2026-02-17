@@ -29,6 +29,22 @@ scan-update:
     @uv run src/scan_update.py
     @printf "\n"
 
+# Find duplicate files in the database by comparing hashes
+[group('app')]
+duplicates:
+    @printf "\n"
+    @printf "\033[0;34m=== Finding Duplicates ===\033[0m\n"
+    @uv run src/duplicates.py
+    @printf "\n"
+
+# Interactively select and remove duplicate files by folder
+[group('app')]
+cleanup:
+    @printf "\n"
+    @printf "\033[0;34m=== Cleanup Duplicates ===\033[0m\n"
+    @uv run src/cleanup.py
+    @printf "\n"
+
 # Delete the database (requires typing 'destroy' to confirm)
 [group('app')]
 reset:
