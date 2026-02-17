@@ -303,3 +303,125 @@ def execute_deletions(
         failed_count=len(failed_paths),
         failed_paths=failed_paths,
     )
+
+
+def print_dry_run_report(plan: DeletionPlan) -> None:
+    """Print a dry-run report of planned deletions.
+
+    Shows each file to be deleted, where a surviving copy lives,
+    totals, and any files protected by last-copy safety.
+
+    Args:
+        plan: The deletion plan to report on.
+    """
+    folder_count: int = len({d.rel_path.rsplit("/", 1)[0] if "/" in d.rel_path else "." for d in plan.deletions})
+    print(f"\nFiles to delete ({folder_count} folders selected):\n")
+
+    for file_del in sorted(plan.deletions, key=lambda d: d.rel_path):
+        size_str: str = _format_size(file_del.file_size)
+        print(f"  {file_del.rel_path}  ({size_str})  -- kept in: {file_del.surviving_copy}")
+
+    print(f"\n  Total: {len(plan.deletions)} files, {_format_size(plan.total_bytes)}")
+
+    if plan.protected_paths:
+        print(f"\n  Warning: {len(plan.protected_paths)} files skipped (last copy protection)")
+        for path in sorted(plan.protected_paths):
+            print(f"    {path}")
+
+    print()
+
+
+def show_folder_menu(folder_stats: list[FolderStats]) -> list[str] | None:
+    """Show an interactive folder selection menu.
+
+    Displays folders sorted by duplicate count with checkboxes.
+    Returns the selected folder names, or None if the user cancels.
+
+    Args:
+        folder_stats: List of FolderStats to display.
+
+    Returns:
+        List of selected folder name strings, or None if cancelled/empty.
+    """
+    if not sys.stdout.isatty():
+        print("ERROR: Cleanup requires an interactive terminal.", file=sys.stderr)
+        sys.exit(1)
+
+    from simple_term_menu import TerminalMenu
+
+    entries: list[str] = []
+    for stats in folder_stats:
+        size_str: str = _format_size(stats.reclaimable_bytes)
+        entries.append(f"{stats.folder}  ({stats.duplicate_count} duplicates, {size_str})")
+
+    menu: TerminalMenu = TerminalMenu(
+        entries,
+        title="Select folders to remove duplicates from (Space to toggle, Enter to confirm):",
+        multi_select=True,
+        show_multi_select_hint=True,
+    )
+
+    selected_indices: tuple[int, ...] | None = menu.show()
+
+    if selected_indices is None:
+        return None
+
+    if isinstance(selected_indices, int):
+        selected_indices = (selected_indices,)
+
+    if len(selected_indices) == 0:
+        return None
+
+    return [folder_stats[i].folder for i in selected_indices]
+
+
+def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
+    """Run the full interactive cleanup workflow.
+
+    Builds duplicate groups, shows folder analysis, presents the TUI
+    menu for folder selection, shows a dry-run report, and executes
+    deletion after user confirmation.
+
+    Args:
+        conn: An open SQLite connection to the files database.
+        base_path: The resolved base directory that rel_path values are relative to.
+    """
+    print("Analyzing duplicate files by folder...")
+    groups: dict[str, list[DuplicateFile]] = build_duplicate_groups(conn)
+
+    if not groups:
+        print("No duplicates found.")
+        return
+
+    folder_stats: list[FolderStats] = compute_folder_stats(groups)
+    print(f"Found {len(groups)} duplicate groups across {len(folder_stats)} folders.\n")
+
+    selected: list[str] | None = show_folder_menu(folder_stats)
+
+    if selected is None:
+        print("Cancelled.")
+        return
+
+    plan: DeletionPlan = plan_deletions(
+        selected_folders=selected,
+        duplicate_groups=groups,
+    )
+
+    if not plan.deletions:
+        print("No files to delete in selected folders.")
+        return
+
+    print_dry_run_report(plan)
+
+    answer: str = input("Proceed with deletion? [y/N] ")
+    if answer.strip().lower() != "y":
+        print("Aborted. No files deleted.")
+        return
+
+    result: DeletionResult = execute_deletions(conn=conn, base_path=base_path, plan=plan)
+
+    print(f"\nDeleted: {result.deleted_count} files ({_format_size(result.deleted_bytes)})")
+    if result.failed_count > 0:
+        print(f"Failed:  {result.failed_count} files (see warnings above)")
+    if plan.protected_paths:
+        print(f"Skipped: {len(plan.protected_paths)} files (last copy protection)")
