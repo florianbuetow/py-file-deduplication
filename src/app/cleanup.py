@@ -13,7 +13,7 @@ from collections import defaultdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from app.database import delete_files, iter_hashed_files_with_id
+from app.database import count_hashed_files, delete_files, iter_hashed_files_with_id
 
 _GB: int = 1024**3
 _MB: int = 1024**2
@@ -127,7 +127,7 @@ def build_duplicate_groups(conn: sqlite3.Connection) -> dict[str, list[Duplicate
     """Build duplicate groups from hashed files in the database.
 
     Groups files by (file_size, md5_hash, sha256_hash). Only groups with
-    2 or more files are returned.
+    2 or more files are returned. Prints progress while scanning.
 
     Args:
         conn: An open SQLite connection to the files database.
@@ -136,10 +136,11 @@ def build_duplicate_groups(conn: sqlite3.Connection) -> dict[str, list[Duplicate
         A dict mapping group keys to lists of DuplicateFile objects.
         Only groups with 2+ files are included.
     """
+    total: int = count_hashed_files(conn)
     index: dict[str, list[DuplicateFile]] = defaultdict(list)
 
     cursor: sqlite3.Cursor = iter_hashed_files_with_id(conn)
-    for row in cursor:
+    for current, row in enumerate(cursor, start=1):
         file_id: int = row[0]
         file_size: int = row[1]
         md5_hash: str = row[2]
@@ -159,7 +160,17 @@ def build_duplicate_groups(conn: sqlite3.Connection) -> dict[str, list[Duplicate
             )
         )
 
-    return {k: v for k, v in index.items() if len(v) > 1}
+        if current % 10000 == 0 or current == total:
+            print(f"  [{current}/{total}] Grouping files by hash ...", end="\r")
+
+    if total > 0:
+        print()
+
+    duplicate_groups: dict[str, list[DuplicateFile]] = {k: v for k, v in index.items() if len(v) > 1}
+    duplicate_count: int = sum(len(v) for v in duplicate_groups.values())
+    print(f"  {duplicate_count} duplicate files in {len(duplicate_groups)} groups")
+
+    return duplicate_groups
 
 
 def compute_folder_stats(duplicate_groups: dict[str, list[DuplicateFile]]) -> list[FolderStats]:
@@ -792,7 +803,7 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
         conn: An open SQLite connection to the files database.
         base_path: The resolved base directory that rel_path values are relative to.
     """
-    print("Analyzing duplicate files by folder...")
+    print("Analyzing duplicate files by folder...\n")
     groups: dict[str, list[DuplicateFile]] = build_duplicate_groups(conn)
 
     if not groups:
@@ -800,7 +811,7 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
         return
 
     folder_stats: list[FolderStats] = compute_folder_stats(groups)
-    print(f"Found {len(groups)} duplicate groups across {len(folder_stats)} folders.\n")
+    print(f"  {len(folder_stats)} folders with duplicates\n")
 
     while True:
         selected: list[str] | None = show_folder_menu(folder_stats, groups)
@@ -834,10 +845,10 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
             print(f"Skipped: {len(plan.protected_paths)} files (last copy protection)")
 
         # Refresh duplicate groups — some may no longer exist after deletion
-        print("\nRefreshing duplicate analysis...")
+        print("\nRefreshing duplicate analysis...\n")
         groups = build_duplicate_groups(conn)
         if not groups:
             print("\nNo more duplicates remaining.")
             return
         folder_stats = compute_folder_stats(groups)
-        print(f"\n{len(groups)} duplicate groups remaining across {len(folder_stats)} folders.\n")
+        print(f"  {len(folder_stats)} folders with duplicates\n")

@@ -107,6 +107,20 @@ def count_unhashed_files(conn: sqlite3.Connection) -> int:
     return row[0]
 
 
+def count_hashed_files(conn: sqlite3.Connection) -> int:
+    """Count files that have been hashed.
+
+    Args:
+        conn: An open SQLite connection.
+
+    Returns:
+        The number of file records with non-NULL md5_hash.
+    """
+    cursor: sqlite3.Cursor = conn.execute("SELECT COUNT(*) FROM files WHERE md5_hash IS NOT NULL AND sha256_hash IS NOT NULL")
+    row: tuple[int] = cursor.fetchone()
+    return row[0]
+
+
 def sum_unhashed_bytes(conn: sqlite3.Connection) -> int:
     """Sum the total file_size of all unhashed files.
 
