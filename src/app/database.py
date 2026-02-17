@@ -176,6 +176,44 @@ def iter_all_files(conn: sqlite3.Connection) -> sqlite3.Cursor:
     return conn.execute("SELECT id, rel_path FROM files ORDER BY id")
 
 
+def iter_hashed_files(conn: sqlite3.Connection) -> sqlite3.Cursor:
+    """Return a cursor over all hashed file records.
+
+    Yields rows as (file_size, md5_hash, sha256_hash, rel_path) for files
+    that have been hashed (both md5_hash and sha256_hash are NOT NULL).
+
+    Args:
+        conn: An open SQLite connection.
+
+    Returns:
+        A cursor iterating over (file_size, md5_hash, sha256_hash, rel_path) tuples.
+    """
+    return conn.execute(
+        "SELECT file_size, md5_hash, sha256_hash, rel_path FROM files "
+        "WHERE md5_hash IS NOT NULL AND sha256_hash IS NOT NULL "
+        "ORDER BY file_size DESC"
+    )
+
+
+def iter_hashed_files_with_id(conn: sqlite3.Connection) -> sqlite3.Cursor:
+    """Return a cursor over all hashed file records including their IDs.
+
+    Yields rows as (id, file_size, md5_hash, sha256_hash, rel_path) for files
+    that have been hashed (both md5_hash and sha256_hash are NOT NULL).
+
+    Args:
+        conn: An open SQLite connection.
+
+    Returns:
+        A cursor iterating over (id, file_size, md5_hash, sha256_hash, rel_path) tuples.
+    """
+    return conn.execute(
+        "SELECT id, file_size, md5_hash, sha256_hash, rel_path FROM files "
+        "WHERE md5_hash IS NOT NULL AND sha256_hash IS NOT NULL "
+        "ORDER BY file_size DESC"
+    )
+
+
 def delete_files(conn: sqlite3.Connection, file_ids: list[int]) -> int:
     """Delete file records by their IDs.
 

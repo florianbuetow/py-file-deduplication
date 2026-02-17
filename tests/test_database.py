@@ -8,6 +8,8 @@ from app.database import (
     delete_files,
     insert_file,
     iter_all_files,
+    iter_hashed_files,
+    iter_hashed_files_with_id,
     iter_unhashed_files,
     open_database,
     update_hashes,
@@ -212,6 +214,49 @@ class TestIterAllFiles:
         assert ids == [1, 2, 3]
 
 
+class TestIterHashedFiles:
+    def test_returns_only_hashed(self, db_conn):
+        insert_file(db_conn, "a.jpg", "a.jpg", ".jpg", 100)
+        insert_file(db_conn, "b.jpg", "b.jpg", ".jpg", 200)
+        insert_file(db_conn, "c.jpg", "c.jpg", ".jpg", 300)
+        db_conn.commit()
+
+        update_hashes(db_conn, 1, "md5a", "sha256a", "2026-01-01T00:00:00Z")
+        update_hashes(db_conn, 3, "md5c", "sha256c", "2026-01-01T00:00:00Z")
+        db_conn.commit()
+
+        cursor = iter_hashed_files(db_conn)
+        rows = cursor.fetchall()
+
+        assert len(rows) == 2
+        # Ordered by file_size DESC: c (300), a (100)
+        assert rows[0] == (300, "md5c", "sha256c", "c.jpg")
+        assert rows[1] == (100, "md5a", "sha256a", "a.jpg")
+
+    def test_returns_empty_when_none_hashed(self, db_conn):
+        insert_file(db_conn, "a.jpg", "a.jpg", ".jpg", 100)
+        db_conn.commit()
+
+        cursor = iter_hashed_files(db_conn)
+        rows = cursor.fetchall()
+
+        assert len(rows) == 0
+
+    def test_returns_all_when_all_hashed(self, db_conn):
+        insert_file(db_conn, "a.jpg", "a.jpg", ".jpg", 100)
+        insert_file(db_conn, "b.jpg", "b.jpg", ".jpg", 200)
+        db_conn.commit()
+
+        update_hashes(db_conn, 1, "md5a", "sha256a", "2026-01-01T00:00:00Z")
+        update_hashes(db_conn, 2, "md5b", "sha256b", "2026-01-01T00:00:00Z")
+        db_conn.commit()
+
+        cursor = iter_hashed_files(db_conn)
+        rows = cursor.fetchall()
+
+        assert len(rows) == 2
+
+
 class TestDeleteFiles:
     def test_deletes_specified_files(self, db_conn):
         insert_file(db_conn, "a.jpg", "a.jpg", ".jpg", 100)
@@ -248,3 +293,42 @@ class TestDeleteFiles:
 
         assert deleted == 1
         assert count_total_files(db_conn) == 1
+
+
+class TestIterHashedFilesWithId:
+    def test_returns_id_and_hashed_fields(self, db_conn):
+        insert_file(db_conn, "a.jpg", "a.jpg", ".jpg", 100)
+        insert_file(db_conn, "b.jpg", "b.jpg", ".jpg", 200)
+        db_conn.commit()
+
+        update_hashes(db_conn, 1, "md5a", "sha256a", "2026-01-01T00:00:00Z")
+        update_hashes(db_conn, 2, "md5b", "sha256b", "2026-01-01T00:00:00Z")
+        db_conn.commit()
+
+        cursor = iter_hashed_files_with_id(db_conn)
+        rows = cursor.fetchall()
+
+        assert len(rows) == 2
+        # Ordered by file_size DESC: b (200), a (100)
+        assert rows[0] == (2, 200, "md5b", "sha256b", "b.jpg")
+        assert rows[1] == (1, 100, "md5a", "sha256a", "a.jpg")
+
+    def test_excludes_unhashed(self, db_conn):
+        insert_file(db_conn, "a.jpg", "a.jpg", ".jpg", 100)
+        insert_file(db_conn, "b.jpg", "b.jpg", ".jpg", 200)
+        db_conn.commit()
+
+        update_hashes(db_conn, 1, "md5a", "sha256a", "2026-01-01T00:00:00Z")
+        db_conn.commit()
+
+        cursor = iter_hashed_files_with_id(db_conn)
+        rows = cursor.fetchall()
+
+        assert len(rows) == 1
+        assert rows[0] == (1, 100, "md5a", "sha256a", "a.jpg")
+
+    def test_empty_database(self, db_conn):
+        cursor = iter_hashed_files_with_id(db_conn)
+        rows = cursor.fetchall()
+
+        assert len(rows) == 0
