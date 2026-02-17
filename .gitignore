@@ -57,6 +57,9 @@ dmypy.json
 # Data
 data/
 
+# Docs
+docs/
+
 # Reports
 reports/
 
