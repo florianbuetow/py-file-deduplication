@@ -41,10 +41,10 @@ def scan_update(conn: sqlite3.Connection, base_path: Path) -> None:
         full_path: Path = base_path / rel_path
 
         current = current + 1
-        print(f"[{current}/{total}] Checking ... {full_path}")
-
         if not full_path.exists():
             missing_ids.append(file_id)
+
+        print(f"[{current}/{total} found] [{len(missing_ids)}/{total} missing] Checking ... {full_path}")
 
     missing_count: int = len(missing_ids)
     print()
@@ -61,4 +61,6 @@ def scan_update(conn: sqlite3.Connection, base_path: Path) -> None:
 
     deleted: int = delete_files(conn, missing_ids)
     conn.commit()
-    print(f"Deleted {deleted} files from database.")
+    remaining: int = count_total_files(conn)
+    print(f"Removed {deleted} stale entries from database.")
+    print(f"Remaining files in database: {remaining}")

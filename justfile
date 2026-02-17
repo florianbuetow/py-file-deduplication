@@ -209,6 +209,14 @@ test:
     @uv run pytest tests/ -v
     @printf "\n"
 
+# Run TUI integration test for cleanup expand/collapse (requires tmux)
+[group('test')]
+test-tui:
+    @printf "\n"
+    @printf "\033[0;34m=== TUI Integration Test ===\033[0m\n"
+    @./scripts/test_cleanup_tui.sh
+    @printf "\n"
+
 # Run unit tests with coverage report and threshold check
 [group('test')]
 test-coverage: init

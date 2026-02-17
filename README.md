@@ -14,7 +14,7 @@ You configure which directories and file extensions to scan, then run a pipeline
 
 **Report** -- Show duplicate groups, how many copies exist, and total reclaimable disk space.
 
-**Clean up** -- Interactive terminal menu ranks folders by duplicate count. Select which folders to clean, review a dry-run report showing exactly what will be deleted and where surviving copies live, then confirm. The tool never deletes the last copy of any file -- if all folders containing a file are selected, the alphabetically first copy is automatically protected.
+**Clean up** -- Interactive terminal menu displays folders as a collapsible tree. Expand/collapse with Enter, select with Space, press d to proceed. Review a dry-run report showing exactly what will be deleted and where surviving copies live, then confirm. Before any deletion, the tool verifies every surviving copy exists on disk -- if any are missing, deletion is blocked to prevent data loss. The tool never deletes the last copy of any file -- if all folders containing a file are selected, the alphabetically first copy is automatically protected.
 
 ### Pipeline
 
@@ -27,7 +27,7 @@ Each stage is a separate command. You can inspect results between steps and re-r
 ### Key Properties
 
 - **Incremental** -- Scan detects new and removed files. Hash only processes files that haven't been hashed yet. No wasted work on re-runs.
-- **Safe deletion** -- Last-copy protection guarantees at least one copy of every file is always preserved. Dry-run report before any file is touched.
+- **Safe deletion** -- Last-copy protection guarantees at least one copy of every file is always preserved. Surviving copies are verified on disk before any deletion proceeds. Dry-run report before any file is touched.
 - **Resumable** -- Hashing large volumes can take hours. Interrupt and resume without losing progress.
 - **Dual-hash verification** -- Files are matched by size + MD5 + SHA-256. False positives are effectively impossible.
 - **Configuration-driven** -- Works with any file type. Extensions, directories, and exclusions are all configured in YAML.
@@ -146,13 +146,14 @@ just cleanup
 Analyzing duplicate files by folder...
 Found 186 duplicate groups across 12 folders.
 
-Select folders to remove duplicates from (Space to toggle, Enter to confirm):
-[ ] trip-backup/photos/     (247 duplicates, 12.50 GB)
-[ ] old-drive/raw/          (183 duplicates, 8.30 GB)
-[ ] copies/2024/            ( 42 duplicates, 1.70 GB)
+Select folders to remove duplicates from:
+  [ ] ├── ▸ old-drive/  (183 duplicates, 8.30 GB)
+  [ ] ├── ▸ trip-backup/  (247 duplicates, 12.50 GB)
+  [ ] └── copies/  (42 duplicates, 1.70 GB)
+<space>: select  <enter>: expand/collapse  <d>: delete selected
 ```
 
-Select folders with Space, press Enter, review the dry-run report:
+Press Enter to expand a folder and see its children. Space toggles selection. Press d to proceed. Review the dry-run report:
 
 ```
 Files to delete (1 folders selected):
@@ -166,7 +167,13 @@ Files to delete (1 folders selected):
 Proceed with deletion? [y/N]
 ```
 
-Type `y` to confirm. Files are deleted from disk and removed from the database.
+Type `y` to confirm. Each file is printed as it is deleted:
+
+```
+  [1/247] Deleting trip-backup/photos/IMG_001.CR3  (25.50 MB)
+  [2/247] Deleting trip-backup/photos/IMG_002.CR3  (25.10 MB)
+  ...
+```
 
 ## Contributing
 
@@ -183,6 +190,7 @@ just ci-quiet      # Run all 11 validation checks
 | Command | What it does |
 |---------|-------------|
 | `just test` | Run all tests (pytest) |
+| `just test-tui` | TUI integration test (requires tmux) |
 | `just test-coverage` | Run tests with coverage report |
 | `just code-format` | Auto-fix formatting (ruff) |
 | `just code-style` | Check formatting without modifying (ruff) |
@@ -233,12 +241,15 @@ src/
     scan_updater.py  # Stale entry detection
     scanner.py       # Directory crawling and file discovery
 tests/
-  test_cleanup.py       # Cleanup unit tests (21 tests)
+  test_cleanup.py       # Cleanup unit tests (45 tests)
   test_cleanup_e2e.py   # End-to-end tests with real files on disk (5 tests)
   test_config.py        # Config loading and validation tests
   test_database.py      # Database operation tests
   test_hasher.py        # Hasher tests
   test_scanner.py       # Scanner tests
+  test_scan_updater.py  # Scan updater tests
+scripts/
+  test_cleanup_tui.sh   # TUI integration test (tmux-based)
 ```
 
 ### Dev Notes

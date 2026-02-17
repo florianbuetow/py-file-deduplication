@@ -214,8 +214,13 @@ def iter_hashed_files_with_id(conn: sqlite3.Connection) -> sqlite3.Cursor:
     )
 
 
+_SQLITE_VARIABLE_LIMIT: int = 500
+
+
 def delete_files(conn: sqlite3.Connection, file_ids: list[int]) -> int:
     """Delete file records by their IDs.
+
+    Batches deletions to stay within SQLite's bind-variable limit.
 
     Args:
         conn: An open SQLite connection.
@@ -226,9 +231,13 @@ def delete_files(conn: sqlite3.Connection, file_ids: list[int]) -> int:
     """
     if not file_ids:
         return 0
-    placeholders: str = ",".join("?" for _ in file_ids)
-    cursor: sqlite3.Cursor = conn.execute(
-        f"DELETE FROM files WHERE id IN ({placeholders})",  # nosec B608
-        file_ids,
-    )
-    return cursor.rowcount
+    total_deleted: int = 0
+    for start in range(0, len(file_ids), _SQLITE_VARIABLE_LIMIT):
+        batch: list[int] = file_ids[start : start + _SQLITE_VARIABLE_LIMIT]
+        placeholders: str = ",".join("?" for _ in batch)
+        cursor: sqlite3.Cursor = conn.execute(
+            f"DELETE FROM files WHERE id IN ({placeholders})",  # nosec B608
+            batch,
+        )
+        total_deleted += cursor.rowcount
+    return total_deleted

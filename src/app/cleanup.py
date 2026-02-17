@@ -5,11 +5,13 @@ selecting which folders' duplicates to remove, and executes deletion
 with last-copy safety protection.
 """
 
+import collections.abc
 import dataclasses
 import sqlite3
 import sys
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from app.database import delete_files, iter_hashed_files_with_id
 
@@ -194,6 +196,224 @@ def compute_folder_stats(duplicate_groups: dict[str, list[DuplicateFile]]) -> li
     return stats
 
 
+def _aggregate_tree_stats(
+    children: dict[str, Any],
+    stats_by_folder: dict[str, FolderStats],
+    path_so_far: str,
+    aggregated: dict[str, tuple[int, int]],
+) -> tuple[int, int]:
+    """Recursively compute aggregated duplicate stats for every tree node.
+
+    Each node's aggregated stats include its own direct duplicates (if any)
+    plus all descendant duplicates. Results are stored in the aggregated dict.
+
+    Args:
+        children: Dict mapping child name to its sub-children dict.
+        stats_by_folder: Lookup from full folder path to FolderStats.
+        path_so_far: Accumulated path prefix for lookup.
+        aggregated: Accumulator mapping folder path to (total_dupes, total_bytes).
+
+    Returns:
+        Tuple of (total_duplicate_count, total_reclaimable_bytes) for this subtree.
+    """
+    total_dupes: int = 0
+    total_bytes: int = 0
+
+    # Include own direct stats if this folder has duplicates
+    if path_so_far in stats_by_folder:
+        s: FolderStats = stats_by_folder[path_so_far]
+        total_dupes += s.duplicate_count
+        total_bytes += s.reclaimable_bytes
+
+    # Recurse into children
+    for name, sub_children in children.items():
+        full_path: str = f"{path_so_far}/{name}" if path_so_far else name
+        child_dupes: int
+        child_bytes: int
+        child_dupes, child_bytes = _aggregate_tree_stats(sub_children, stats_by_folder, full_path, aggregated)
+        total_dupes += child_dupes
+        total_bytes += child_bytes
+
+    if path_so_far:
+        aggregated[path_so_far] = (total_dupes, total_bytes)
+
+    return total_dupes, total_bytes
+
+
+def build_folder_tree_entries(
+    folder_stats: list[FolderStats],
+    expanded: set[str],
+) -> tuple[list[str], dict[int, str], dict[str, int], set[str]]:
+    """Build tree-formatted menu entries from folder stats.
+
+    Creates ASCII tree lines suitable for use in a TerminalMenu, with
+    children sorted alphabetically at each level. Every folder shows
+    aggregated duplicate count and reclaimable size (including all
+    descendants). Folders not in the expanded set are shown collapsed
+    (children hidden). Visual indicators show expand/collapse state.
+
+    Args:
+        folder_stats: List of FolderStats to build the tree from.
+        expanded: Set of folder paths that should be shown expanded.
+
+    Returns:
+        A tuple of (entries, index_to_folder, folder_to_index, expandable):
+        - entries: list of display strings
+        - index_to_folder: every entry index mapped to its folder path
+        - folder_to_index: folder path mapped to its entry index
+        - expandable: set of folder paths that have children (can expand)
+    """
+    stats_by_folder: dict[str, FolderStats] = {s.folder: s for s in folder_stats}
+
+    entries: list[str] = []
+    index_to_folder: dict[int, str] = {}
+    folder_to_index: dict[str, int] = {}
+    expandable: set[str] = set()
+
+    # Handle root-level folder "." as first entry if present
+    if "." in stats_by_folder:
+        s: FolderStats = stats_by_folder["."]
+        entries.append(f"./  ({s.duplicate_count} duplicates, {_format_size(s.reclaimable_bytes)})")
+        index_to_folder[0] = "."
+        folder_to_index["."] = 0
+
+    # Build nested dict tree from non-root folder paths
+    tree: dict[str, Any] = {}
+    for stats in folder_stats:
+        if stats.folder == ".":
+            continue
+        parts: tuple[str, ...] = PurePosixPath(stats.folder).parts
+        node: dict[str, Any] = tree
+        for part in parts:
+            if part not in node:
+                node[part] = {}
+            node = node[part]
+
+    # Compute aggregated stats for every node (including intermediates)
+    aggregated: dict[str, tuple[int, int]] = {}
+    _aggregate_tree_stats(tree, stats_by_folder, "", aggregated)
+
+    _flatten_tree_entries(
+        children=tree,
+        stats_by_folder=stats_by_folder,
+        aggregated=aggregated,
+        expanded=expanded,
+        path_so_far="",
+        prefix="",
+        entries=entries,
+        index_to_folder=index_to_folder,
+        folder_to_index=folder_to_index,
+        expandable=expandable,
+    )
+
+    return entries, index_to_folder, folder_to_index, expandable
+
+
+def _flatten_tree_entries(
+    children: dict[str, Any],
+    stats_by_folder: dict[str, FolderStats],
+    aggregated: dict[str, tuple[int, int]],
+    expanded: set[str],
+    path_so_far: str,
+    prefix: str,
+    entries: list[str],
+    index_to_folder: dict[int, str],
+    folder_to_index: dict[str, int],
+    expandable: set[str],
+) -> None:
+    """Recursively flatten tree into menu entries with ASCII connectors.
+
+    Every folder shows its aggregated stats. All entries are recorded
+    in index_to_folder so every folder is navigable and selectable.
+    Folders with children show expand/collapse indicators and only
+    recurse into children when in the expanded set.
+
+    Args:
+        children: Dict mapping child name to its sub-children dict.
+        stats_by_folder: Lookup from full folder path to FolderStats.
+        aggregated: Lookup from folder path to aggregated (dupes, bytes).
+        expanded: Set of folder paths currently expanded.
+        path_so_far: Accumulated path prefix for stats lookup.
+        prefix: Current indentation prefix for rendering.
+        entries: Accumulator list for menu entry strings.
+        index_to_folder: Accumulator mapping entry index to folder path.
+        folder_to_index: Accumulator mapping folder path to entry index.
+        expandable: Accumulator for folders that have children.
+    """
+    sorted_names: list[str] = sorted(children.keys())
+    for i, name in enumerate(sorted_names):
+        is_last: bool = i == len(sorted_names) - 1
+        connector: str = "└── " if is_last else "├── "
+
+        full_path: str = f"{path_so_far}/{name}" if path_so_far else name
+
+        has_children: bool = len(children[name]) > 0
+        if has_children:
+            expandable.add(full_path)
+
+        # Every entry is mapped (not just those with direct duplicates)
+        idx: int = len(entries)
+        index_to_folder[idx] = full_path
+        folder_to_index[full_path] = idx
+
+        # Expand/collapse indicator for folders with children
+        indicator: str = ""
+        if has_children:
+            indicator = "▾ " if full_path in expanded else "▸ "
+
+        # Show aggregated stats (own + all descendants)
+        annotation: str = ""
+        if full_path in aggregated:
+            dupes: int = aggregated[full_path][0]
+            size: int = aggregated[full_path][1]
+            annotation = f"  ({dupes} duplicates, {_format_size(size)})"
+
+        entries.append(f"{prefix}{connector}{indicator}{name}/{annotation}")
+
+        # Only recurse into children if this folder is expanded
+        if has_children and full_path in expanded:
+            extension: str = "    " if is_last else "│   "
+            _flatten_tree_entries(
+                children=children[name],
+                stats_by_folder=stats_by_folder,
+                aggregated=aggregated,
+                expanded=expanded,
+                path_so_far=full_path,
+                prefix=prefix + extension,
+                entries=entries,
+                index_to_folder=index_to_folder,
+                folder_to_index=folder_to_index,
+                expandable=expandable,
+            )
+
+
+def _expand_selected_folders(
+    selected_folders: list[str],
+    all_folders_with_duplicates: set[str],
+) -> list[str]:
+    """Expand parent folder selections to include descendant folders.
+
+    For each selected folder, includes the folder itself (if it has
+    direct duplicates) plus all folders in all_folders_with_duplicates
+    that are descendants of the selected folder.
+
+    Args:
+        selected_folders: Folder paths selected by the user.
+        all_folders_with_duplicates: Set of all folder paths that have duplicates.
+
+    Returns:
+        Deduplicated sorted list of folder paths to pass to plan_deletions.
+    """
+    result: set[str] = set()
+    for folder in selected_folders:
+        if folder in all_folders_with_duplicates:
+            result.add(folder)
+        for candidate in all_folders_with_duplicates:
+            if candidate.startswith(folder + "/"):
+                result.add(candidate)
+    return sorted(result)
+
+
 def plan_deletions(
     selected_folders: list[str],
     duplicate_groups: dict[str, list[DuplicateFile]],
@@ -276,12 +496,37 @@ def execute_deletions(
     Returns:
         A DeletionResult with counts and paths of deleted and failed files.
     """
+    # Pre-flight safety: verify every surviving copy exists on disk.
+    # Without this, we could delete a file whose "surviving copy" is
+    # already gone from disk (but still in the DB), causing data loss.
+    surviving_copies: set[str] = {d.surviving_copy for d in plan.deletions}
+    missing_survivors: list[str] = [
+        rel_path for rel_path in sorted(surviving_copies) if not (base_path / rel_path).exists()
+    ]
+    if missing_survivors:
+        print("\n  ABORT: Surviving copies missing from disk — deletion blocked to prevent data loss.")
+        print(f"  {len(missing_survivors)} surviving copies not found:\n")
+        for rel_path in missing_survivors[:20]:
+            print(f"    {rel_path}")
+        if len(missing_survivors) > 20:
+            print(f"    ... +{len(missing_survivors) - 20} more")
+        print("\n  Run 'just scan-update' to remove stale database entries, then retry.")
+        return DeletionResult(
+            deleted_count=0,
+            deleted_bytes=0,
+            failed_count=len(plan.deletions),
+            failed_paths=[d.rel_path for d in plan.deletions],
+        )
+
     deleted_ids: list[int] = []
     deleted_bytes: int = 0
     failed_paths: list[str] = []
+    total: int = len(plan.deletions)
 
-    for file_del in plan.deletions:
+    for i, file_del in enumerate(plan.deletions, start=1):
         full_path: Path = base_path / file_del.rel_path
+        size_str: str = _format_size(file_del.file_size)
+        print(f"  [{i}/{total}] Deleting {file_del.rel_path}  ({size_str})")
 
         try:
             full_path.unlink(missing_ok=True)
@@ -331,11 +576,72 @@ def print_dry_run_report(plan: DeletionPlan) -> None:
     print()
 
 
-def show_folder_menu(folder_stats: list[FolderStats]) -> list[str] | None:
-    """Show an interactive folder selection menu.
+def _make_status_callback(
+    entry_to_folder: dict[str, str],
+    stats_by_folder: dict[str, FolderStats],
+) -> "collections.abc.Callable[[str], str]":
+    """Create a status bar callback that shows files for the highlighted folder.
 
-    Displays folders sorted by duplicate count with checkboxes.
-    Returns the selected folder names, or None if the user cancels.
+    Args:
+        entry_to_folder: Mapping from entry display string to folder path.
+        stats_by_folder: Lookup from folder path to FolderStats.
+
+    Returns:
+        A callable that receives an entry string and returns a status string
+        listing up to 10 duplicate filenames in that folder.
+    """
+
+    def callback(entry_text: str) -> str:
+        if entry_text not in entry_to_folder:
+            return ""
+        folder_path: str = entry_to_folder[entry_text]
+        if folder_path not in stats_by_folder:
+            return ""
+        filenames: list[str] = sorted(PurePosixPath(f.rel_path).name for f in stats_by_folder[folder_path].files)
+        max_files: int = 10
+        shown: str = ", ".join(filenames[:max_files])
+        if len(filenames) > max_files:
+            shown += f" ... +{len(filenames) - max_files} more"
+        return f"Files: {shown}"
+
+    return callback
+
+
+def _result_to_folder_paths(
+    result: int | tuple[int, ...] | None,
+    index_to_folder: dict[int, str],
+) -> set[str]:
+    """Convert TerminalMenu result indices to a set of folder paths.
+
+    Args:
+        result: The return value from TerminalMenu.show().
+        index_to_folder: Mapping from entry index to folder path.
+
+    Returns:
+        Set of folder path strings for the selected indices.
+    """
+    if result is None:
+        return set()
+    if isinstance(result, int):
+        indices: tuple[int, ...] = (result,)
+    else:
+        indices = result
+    return {index_to_folder[i] for i in indices if i in index_to_folder}
+
+
+def show_folder_menu(folder_stats: list[FolderStats]) -> list[str] | None:
+    """Show an interactive folder selection menu as an expandable ASCII tree.
+
+    Displays folders in a tree hierarchy with ASCII connectors, sorted
+    alphabetically at each level. Folders start collapsed and can be
+    expanded/collapsed with Enter. Tab toggles folder selection.
+    Pressing d/D proceeds with deletion of selected folders.
+
+    Keys:
+        Space: toggle folder selection.
+        Enter: expand/collapse folder.
+        d/D: confirm selection and proceed to deletion.
+        Escape/q: cancel.
 
     Args:
         folder_stats: List of FolderStats to display.
@@ -349,30 +655,67 @@ def show_folder_menu(folder_stats: list[FolderStats]) -> list[str] | None:
 
     from simple_term_menu import TerminalMenu
 
-    entries: list[str] = []
-    for stats in folder_stats:
-        size_str: str = _format_size(stats.reclaimable_bytes)
-        entries.append(f"{stats.folder}  ({stats.duplicate_count} duplicates, {size_str})")
+    stats_by_folder: dict[str, FolderStats] = {s.folder: s for s in folder_stats}
+    expanded: set[str] = set()
+    cursor_folder: str | None = None
+    selected_paths: set[str] = set()
 
-    menu: TerminalMenu = TerminalMenu(
-        entries,
-        title="Select folders to remove duplicates from (Space to toggle, Enter to confirm):",
-        multi_select=True,
-        show_multi_select_hint=True,
-    )
+    while True:
+        entries: list[str]
+        idx_to_folder: dict[int, str]
+        folder_to_idx: dict[str, int]
+        expandable: set[str]
+        entries, idx_to_folder, folder_to_idx, expandable = build_folder_tree_entries(folder_stats, expanded)
 
-    selected_indices: int | tuple[int, ...] | None = menu.show()
+        entry_to_folder: dict[str, str] = {entries[idx]: folder for idx, folder in idx_to_folder.items()}
 
-    if selected_indices is None:
-        return None
+        # Restore cursor position
+        cursor_pos: int | None = folder_to_idx.get(cursor_folder) if cursor_folder else None
 
-    if isinstance(selected_indices, int):
-        selected_indices = (selected_indices,)
+        # Restore selections as indices
+        preselected: list[int] = [folder_to_idx[f] for f in selected_paths if f in folder_to_idx]
 
-    if len(selected_indices) == 0:
-        return None
+        menu: TerminalMenu = TerminalMenu(
+            entries,
+            title="Select folders to remove duplicates from:",
+            multi_select=True,
+            multi_select_keys=(" ",),
+            accept_keys=("enter", "d", "D"),
+            multi_select_select_on_accept=False,
+            multi_select_empty_ok=True,
+            show_multi_select_hint=True,
+            show_multi_select_hint_text=("<space>: select  <enter>: expand/collapse  <d>: delete selected"),
+            cursor_index=cursor_pos,
+            preselected_entries=preselected or None,
+            status_bar=_make_status_callback(entry_to_folder, stats_by_folder),
+        )
 
-    return [folder_stats[i].folder for i in selected_indices]
+        result: int | tuple[int, ...] | None = menu.show()
+        accept_key: str = menu.chosen_accept_key
+
+        if not accept_key:  # Escape/q → empty string
+            return None
+
+        # Save cursor position — _view.active_menu_index is the only way to
+        # retrieve the cursor position from simple_term_menu after show().
+        raw_cursor: int = menu._view.active_menu_index
+        cursor_folder = idx_to_folder.get(raw_cursor)
+
+        # Save current selections as folder paths
+        selected_paths = _result_to_folder_paths(result, idx_to_folder)
+
+        if accept_key == "enter":
+            # Toggle expand/collapse
+            if cursor_folder and cursor_folder in expandable:
+                expanded.symmetric_difference_update({cursor_folder})
+            continue
+
+        # accept_key is "d" or "D" → proceed with deletion
+        if not selected_paths:
+            return None
+
+        all_with_dupes: set[str] = {s.folder for s in folder_stats}
+        return _expand_selected_folders(sorted(selected_paths), all_with_dupes)
 
 
 def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
@@ -396,32 +739,42 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
     folder_stats: list[FolderStats] = compute_folder_stats(groups)
     print(f"Found {len(groups)} duplicate groups across {len(folder_stats)} folders.\n")
 
-    selected: list[str] | None = show_folder_menu(folder_stats)
+    while True:
+        selected: list[str] | None = show_folder_menu(folder_stats)
 
-    if selected is None:
-        print("Cancelled.")
-        return
+        if selected is None:
+            print("Cancelled.")
+            return
 
-    plan: DeletionPlan = plan_deletions(
-        selected_folders=selected,
-        duplicate_groups=groups,
-    )
+        plan: DeletionPlan = plan_deletions(
+            selected_folders=selected,
+            duplicate_groups=groups,
+        )
 
-    if not plan.deletions:
-        print("No files to delete in selected folders.")
-        return
+        if not plan.deletions:
+            print("No files to delete in selected folders.")
+            continue
 
-    print_dry_run_report(plan)
+        print_dry_run_report(plan)
 
-    answer: str = input("Proceed with deletion? [y/N] ")
-    if answer.strip().lower() != "y":
-        print("Aborted. No files deleted.")
-        return
+        answer: str = input("Proceed with deletion? [y/N] ")
+        if answer.strip().lower() != "y":
+            print("Returning to folder selection...\n")
+            continue
 
-    result: DeletionResult = execute_deletions(conn=conn, base_path=base_path, plan=plan)
+        result: DeletionResult = execute_deletions(conn=conn, base_path=base_path, plan=plan)
 
-    print(f"\nDeleted: {result.deleted_count} files ({_format_size(result.deleted_bytes)})")
-    if result.failed_count > 0:
-        print(f"Failed:  {result.failed_count} files (see warnings above)")
-    if plan.protected_paths:
-        print(f"Skipped: {len(plan.protected_paths)} files (last copy protection)")
+        print(f"\nDeleted: {result.deleted_count} files ({_format_size(result.deleted_bytes)})")
+        if result.failed_count > 0:
+            print(f"Failed:  {result.failed_count} files (see warnings above)")
+        if plan.protected_paths:
+            print(f"Skipped: {len(plan.protected_paths)} files (last copy protection)")
+
+        # Refresh duplicate groups — some may no longer exist after deletion
+        print("\nRefreshing duplicate analysis...")
+        groups = build_duplicate_groups(conn)
+        if not groups:
+            print("\nNo more duplicates remaining.")
+            return
+        folder_stats = compute_folder_stats(groups)
+        print(f"\n{len(groups)} duplicate groups remaining across {len(folder_stats)} folders.\n")

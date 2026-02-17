@@ -4,7 +4,10 @@ from app.cleanup import (
     DeletionPlan,
     DuplicateFile,
     FileDeletion,
+    FolderStats,
+    _expand_selected_folders,
     build_duplicate_groups,
+    build_folder_tree_entries,
     compute_folder_stats,
     execute_deletions,
     plan_deletions,
@@ -295,11 +298,14 @@ class TestPlanDeletions:
 
 class TestExecuteDeletions:
     def test_deletes_files_from_disk_and_db(self, tmp_path):
-        # Set up real files
+        # Set up real files (including surviving copies)
         scan_dir = tmp_path / "files"
         (scan_dir / "backup").mkdir(parents=True)
         (scan_dir / "backup" / "a.raw").write_bytes(b"content_a")
         (scan_dir / "backup" / "b.raw").write_bytes(b"content_b")
+        (scan_dir / "orig").mkdir(parents=True)
+        (scan_dir / "orig" / "a.raw").write_bytes(b"content_a")
+        (scan_dir / "orig" / "b.raw").write_bytes(b"content_b")
 
         # Set up database
         conn = open_database(tmp_path / "test.db")
@@ -329,7 +335,11 @@ class TestExecuteDeletions:
         conn.close()
 
     def test_handles_already_missing_file(self, tmp_path):
-        # File doesn't exist on disk but is in DB
+        # File to delete doesn't exist on disk but is in DB; surviving copy exists
+        scan_dir = tmp_path / "files"
+        (scan_dir / "orig").mkdir(parents=True)
+        (scan_dir / "orig" / "gone.raw").write_bytes(b"content")
+
         conn = open_database(tmp_path / "test.db")
         file_id = _insert_hashed_file(conn, "gone.raw", "backup/gone.raw", ".raw", 100, "md5g", "shag")
 
@@ -340,9 +350,6 @@ class TestExecuteDeletions:
             protected_paths=[],
             total_bytes=100,
         )
-
-        scan_dir = tmp_path / "files"
-        scan_dir.mkdir()
 
         result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan)
 
@@ -365,3 +372,287 @@ class TestExecuteDeletions:
         assert result.deleted_bytes == 0
         assert result.failed_count == 0
         conn.close()
+
+    def test_aborts_when_surviving_copy_missing(self, tmp_path):
+        # Surviving copy does NOT exist on disk — deletion must be blocked
+        scan_dir = tmp_path / "files"
+        (scan_dir / "backup").mkdir(parents=True)
+        (scan_dir / "backup" / "a.raw").write_bytes(b"content_a")
+        # orig/a.raw intentionally NOT created
+
+        conn = open_database(tmp_path / "test.db")
+        file_id = _insert_hashed_file(conn, "a.raw", "backup/a.raw", ".raw", 9, "md5a", "shaa")
+
+        plan = DeletionPlan(
+            deletions=[
+                FileDeletion(file_id=file_id, rel_path="backup/a.raw", file_size=9, surviving_copy="orig/a.raw"),
+            ],
+            protected_paths=[],
+            total_bytes=9,
+        )
+
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan)
+
+        # Nothing should be deleted
+        assert result.deleted_count == 0
+        assert result.failed_count == 1
+        # File still on disk
+        assert (scan_dir / "backup" / "a.raw").exists()
+        # DB entry still present
+        cursor = conn.execute("SELECT COUNT(*) FROM files")
+        assert cursor.fetchone()[0] == 1
+        conn.close()
+
+
+def _make_folder_stats(folder: str, duplicate_count: int, reclaimable_bytes: int) -> FolderStats:
+    """Helper to create a FolderStats with no file details (sufficient for tree rendering)."""
+    return FolderStats(
+        folder=folder,
+        duplicate_count=duplicate_count,
+        reclaimable_bytes=reclaimable_bytes,
+        files=[],
+    )
+
+
+class TestBuildFolderTreeEntries:
+    def test_empty_list(self):
+        entries, index_to_folder, folder_to_index, expandable = build_folder_tree_entries([], set())
+        assert entries == []
+        assert index_to_folder == {}
+        assert folder_to_index == {}
+        assert expandable == set()
+
+    def test_single_top_level_folder(self):
+        stats = [_make_folder_stats("photos", 10, 1024**3)]
+        entries, index_to_folder, folder_to_index, expandable = build_folder_tree_entries(stats, set())
+        assert len(entries) == 1
+        assert entries[0] == "└── photos/  (10 duplicates, 1.00 GB)"
+        assert index_to_folder == {0: "photos"}
+        assert folder_to_index == {"photos": 0}
+        assert expandable == set()
+
+    def test_two_top_level_folders_sorted_alphabetically(self):
+        stats = [
+            _make_folder_stats("zebra", 5, 500),
+            _make_folder_stats("alpha", 3, 300),
+        ]
+        entries, index_to_folder, folder_to_index, expandable = build_folder_tree_entries(stats, set())
+        assert entries[0] == "├── alpha/  (3 duplicates, 300 B)"
+        assert entries[1] == "└── zebra/  (5 duplicates, 500 B)"
+        assert index_to_folder == {0: "alpha", 1: "zebra"}
+        assert folder_to_index == {"alpha": 0, "zebra": 1}
+
+    def test_nested_folders_collapsed_by_default(self):
+        stats = [
+            _make_folder_stats("photos/2020/vacation", 10, 1024**3),
+            _make_folder_stats("photos/2020/work", 5, 512 * 1024**2),
+        ]
+        entries, index_to_folder, folder_to_index, expandable = build_folder_tree_entries(stats, set())
+        # Collapsed: only top-level "photos" shown with ▸ indicator
+        assert len(entries) == 1
+        assert entries[0] == "└── ▸ photos/  (15 duplicates, 1.50 GB)"
+        assert index_to_folder == {0: "photos"}
+        assert folder_to_index == {"photos": 0}
+        assert "photos" in expandable
+
+    def test_nested_folders_fully_expanded(self):
+        stats = [
+            _make_folder_stats("photos/2020/vacation", 10, 1024**3),
+            _make_folder_stats("photos/2020/work", 5, 512 * 1024**2),
+        ]
+        expanded = {"photos", "photos/2020"}
+        entries, index_to_folder, folder_to_index, expandable = build_folder_tree_entries(stats, expanded)
+        # Fully expanded: all levels visible with ▾ indicators on parents
+        assert entries[0] == "└── ▾ photos/  (15 duplicates, 1.50 GB)"
+        assert entries[1] == "    └── ▾ 2020/  (15 duplicates, 1.50 GB)"
+        assert entries[2] == "        ├── vacation/  (10 duplicates, 1.00 GB)"
+        assert entries[3] == "        └── work/  (5 duplicates, 512.00 MB)"
+        # All entries are in index_to_folder (including intermediates)
+        assert index_to_folder[0] == "photos"
+        assert index_to_folder[1] == "photos/2020"
+        assert index_to_folder[2] == "photos/2020/vacation"
+        assert index_to_folder[3] == "photos/2020/work"
+        assert expandable == {"photos", "photos/2020"}
+
+    def test_intermediate_folder_with_stats_collapsed(self):
+        stats = [
+            _make_folder_stats("photos", 20, 2 * 1024**3),
+            _make_folder_stats("photos/raw", 10, 1024**3),
+        ]
+        entries, index_to_folder, _, expandable = build_folder_tree_entries(stats, set())
+        # Collapsed: only photos shown with ▸
+        assert len(entries) == 1
+        assert entries[0] == "└── ▸ photos/  (30 duplicates, 3.00 GB)"
+        assert index_to_folder == {0: "photos"}
+        assert "photos" in expandable
+
+    def test_intermediate_folder_with_stats_expanded(self):
+        stats = [
+            _make_folder_stats("photos", 20, 2 * 1024**3),
+            _make_folder_stats("photos/raw", 10, 1024**3),
+        ]
+        entries, index_to_folder, _, _ = build_folder_tree_entries(stats, {"photos"})
+        # Expanded: photos/ with ▾ and raw/ visible
+        assert entries[0] == "└── ▾ photos/  (30 duplicates, 3.00 GB)"
+        assert entries[1] == "    └── raw/  (10 duplicates, 1.00 GB)"
+        assert index_to_folder == {0: "photos", 1: "photos/raw"}
+
+    def test_root_folder_dot(self):
+        stats = [
+            _make_folder_stats(".", 5, 500),
+            _make_folder_stats("sub", 3, 300),
+        ]
+        entries, index_to_folder, folder_to_index, _ = build_folder_tree_entries(stats, set())
+        assert entries[0] == "./  (5 duplicates, 500 B)"
+        assert entries[1] == "└── sub/  (3 duplicates, 300 B)"
+        assert index_to_folder == {0: ".", 1: "sub"}
+        assert folder_to_index == {".": 0, "sub": 1}
+
+    def test_tree_connectors_multiple_siblings(self):
+        stats = [
+            _make_folder_stats("a", 1, 100),
+            _make_folder_stats("b", 2, 200),
+            _make_folder_stats("c", 3, 300),
+        ]
+        entries, _, _, _ = build_folder_tree_entries(stats, set())
+        assert "├── a/" in entries[0]
+        assert "├── b/" in entries[1]
+        assert "└── c/" in entries[2]
+
+    def test_no_files_in_tree_entries(self):
+        stats = [
+            FolderStats(
+                folder="photos",
+                duplicate_count=3,
+                reclaimable_bytes=300,
+                files=[
+                    DuplicateFile(1, "photos/IMG_001.CR2", 100, "k1", "photos"),
+                    DuplicateFile(2, "photos/IMG_002.CR2", 100, "k2", "photos"),
+                    DuplicateFile(3, "photos/IMG_003.CR2", 100, "k3", "photos"),
+                ],
+            ),
+        ]
+        entries, index_to_folder, _, _ = build_folder_tree_entries(stats, set())
+        assert len(entries) == 1
+        assert entries[0] == "└── photos/  (3 duplicates, 300 B)"
+        assert index_to_folder == {0: "photos"}
+
+    def test_deep_nesting_collapsed(self):
+        stats = [
+            _make_folder_stats("a/b/c", 5, 500),
+            _make_folder_stats("a/d", 3, 300),
+            _make_folder_stats("x/y", 2, 200),
+        ]
+        entries, index_to_folder, _, expandable = build_folder_tree_entries(stats, set())
+        # Collapsed: only top-level folders visible
+        assert entries[0] == "├── ▸ a/  (8 duplicates, 800 B)"
+        assert entries[1] == "└── ▸ x/  (2 duplicates, 200 B)"
+        assert len(entries) == 2
+        assert index_to_folder == {0: "a", 1: "x"}
+        assert "a" in expandable
+        assert "x" in expandable
+
+    def test_deep_nesting_fully_expanded(self):
+        stats = [
+            _make_folder_stats("a/b/c", 5, 500),
+            _make_folder_stats("a/d", 3, 300),
+            _make_folder_stats("x/y", 2, 200),
+        ]
+        expanded = {"a", "a/b", "x"}
+        entries, index_to_folder, _, _ = build_folder_tree_entries(stats, expanded)
+        assert entries[0] == "├── ▾ a/  (8 duplicates, 800 B)"
+        assert entries[1] == "│   ├── ▾ b/  (5 duplicates, 500 B)"
+        assert entries[2] == "│   │   └── c/  (5 duplicates, 500 B)"
+        assert entries[3] == "│   └── d/  (3 duplicates, 300 B)"
+        assert entries[4] == "└── ▾ x/  (2 duplicates, 200 B)"
+        assert entries[5] == "    └── y/  (2 duplicates, 200 B)"
+        # All entries are in index_to_folder
+        assert index_to_folder == {
+            0: "a",
+            1: "a/b",
+            2: "a/b/c",
+            3: "a/d",
+            4: "x",
+            5: "x/y",
+        }
+
+    def test_partial_expand(self):
+        stats = [
+            _make_folder_stats("a/b/c", 5, 500),
+            _make_folder_stats("a/d", 3, 300),
+        ]
+        # Only expand "a", not "a/b"
+        entries, index_to_folder, _, expandable = build_folder_tree_entries(stats, {"a"})
+        assert entries[0] == "└── ▾ a/  (8 duplicates, 800 B)"
+        assert entries[1] == "    ├── ▸ b/  (5 duplicates, 500 B)"
+        assert entries[2] == "    └── d/  (3 duplicates, 300 B)"
+        assert len(entries) == 3
+        assert index_to_folder == {0: "a", 1: "a/b", 2: "a/d"}
+        assert "a/b" in expandable
+
+    def test_folder_to_index_reverse_mapping(self):
+        stats = [
+            _make_folder_stats("alpha", 3, 300),
+            _make_folder_stats("beta", 5, 500),
+        ]
+        _, _, folder_to_index, _ = build_folder_tree_entries(stats, set())
+        assert folder_to_index["alpha"] == 0
+        assert folder_to_index["beta"] == 1
+
+    def test_expandable_set_correctness(self):
+        stats = [
+            _make_folder_stats("a/b", 5, 500),
+            _make_folder_stats("c", 3, 300),
+        ]
+        _, _, _, expandable = build_folder_tree_entries(stats, set())
+        assert expandable == {"a"}  # "a" has child "b", "c" is a leaf
+
+    def test_expandable_includes_nested_parents(self):
+        stats = [
+            _make_folder_stats("a/b/c", 5, 500),
+        ]
+        expanded = {"a"}
+        _, _, _, expandable = build_folder_tree_entries(stats, expanded)
+        # "a" has child "b", "a/b" has child "c"
+        assert "a" in expandable
+        assert "a/b" in expandable
+
+
+class TestExpandSelectedFolders:
+    def test_direct_folder_included(self):
+        result = _expand_selected_folders(["photos"], {"photos", "backup"})
+        assert result == ["photos"]
+
+    def test_parent_expands_to_descendants(self):
+        all_with_dupes = {"photos/2020/vacation", "photos/2020/work", "backup"}
+        result = _expand_selected_folders(["photos"], all_with_dupes)
+        assert result == ["photos/2020/vacation", "photos/2020/work"]
+
+    def test_parent_with_own_duplicates_and_descendants(self):
+        all_with_dupes = {"photos", "photos/raw", "backup"}
+        result = _expand_selected_folders(["photos"], all_with_dupes)
+        assert result == ["photos", "photos/raw"]
+
+    def test_leaf_folder_no_expansion(self):
+        all_with_dupes = {"photos/2020/vacation", "photos/2020/work"}
+        result = _expand_selected_folders(["photos/2020/vacation"], all_with_dupes)
+        assert result == ["photos/2020/vacation"]
+
+    def test_intermediate_without_own_duplicates(self):
+        all_with_dupes = {"a/b/c", "a/d"}
+        result = _expand_selected_folders(["a"], all_with_dupes)
+        assert result == ["a/b/c", "a/d"]
+
+    def test_empty_selection(self):
+        result = _expand_selected_folders([], {"photos"})
+        assert result == []
+
+    def test_no_matching_descendants(self):
+        result = _expand_selected_folders(["nonexistent"], {"photos"})
+        assert result == []
+
+    def test_deduplication(self):
+        all_with_dupes = {"a/b", "a/c"}
+        # Selecting both "a" (parent) and "a/b" (child) should not duplicate
+        result = _expand_selected_folders(["a", "a/b"], all_with_dupes)
+        assert result == ["a/b", "a/c"]
