@@ -7,6 +7,7 @@ with last-copy safety protection.
 
 import collections.abc
 import dataclasses
+import shutil
 import sqlite3
 import sys
 from collections import defaultdict
@@ -491,18 +492,24 @@ def execute_deletions(
     conn: sqlite3.Connection,
     base_path: Path,
     plan: DeletionPlan,
+    force: bool,
 ) -> DeletionResult:
     """Execute file deletions from disk and database.
 
+    By default, files are moved to a _DELETE/ folder at base_path,
+    preserving their relative path structure. This acts as a recoverable
+    trash. With force=True, files are permanently deleted via unlink.
+
     For each file in the deletion plan, removes it from disk (if present)
     and from the database. Files already missing from disk are still
-    cleaned up in the database. Files that cannot be deleted due to
+    cleaned up in the database. Files that cannot be deleted/moved due to
     OS errors are tracked as failures.
 
     Args:
         conn: An open SQLite connection to the files database.
         base_path: The resolved base directory that rel_path values are relative to.
         plan: The deletion plan to execute.
+        force: If True, permanently delete files. If False (default), move to _DELETE/.
 
     Returns:
         A DeletionResult with counts and paths of deleted and failed files.
@@ -510,6 +517,7 @@ def execute_deletions(
     # Pre-flight safety: verify every surviving copy exists on disk.
     # Without this, we could delete a file whose "surviving copy" is
     # already gone from disk (but still in the DB), causing data loss.
+    print(f"\n  Verifying {len(plan.deletions)} surviving copies exist on disk ...")
     surviving_copies: set[str] = {d.surviving_copy for d in plan.deletions}
     missing_survivors: list[str] = [rel_path for rel_path in sorted(surviving_copies) if not (base_path / rel_path).exists()]
     if missing_survivors:
@@ -532,15 +540,32 @@ def execute_deletions(
     failed_paths: list[str] = []
     total: int = len(plan.deletions)
 
+    trash_dir: Path = base_path / "_DELETE"
+    action_label: str = "Deleting" if force else "Moving"
+    dest_label: str = "from disk" if force else "to _DELETE/"
+
+    print(f"\n  {action_label} {total} files {dest_label} ...")
     for i, file_del in enumerate(plan.deletions, start=1):
         full_path: Path = base_path / file_del.rel_path
         size_str: str = _format_size(file_del.file_size)
-        print(f"  [{i}/{total}] Deleting {file_del.rel_path}  ({size_str})")
+        print(f"  [{i}/{total}] {action_label} {file_del.rel_path}  ({size_str})")
 
         try:
-            full_path.unlink(missing_ok=True)
+            if force:
+                full_path.unlink(missing_ok=True)
+            else:
+                if not full_path.exists():
+                    pass  # File already gone — just clean up DB entry
+                else:
+                    dest: Path = trash_dir / file_del.rel_path
+                    if dest.exists():
+                        print(f"  WARNING: Destination already exists in _DELETE/, skipping: {file_del.rel_path}", file=sys.stderr)
+                        failed_paths.append(file_del.rel_path)
+                        continue
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(full_path), str(dest))
         except OSError as err:
-            print(f"  WARNING: Could not delete {full_path}: {err}", file=sys.stderr)
+            print(f"  WARNING: Could not {action_label.lower()} {full_path}: {err}", file=sys.stderr)
             failed_paths.append(file_del.rel_path)
             continue
 
@@ -548,6 +573,7 @@ def execute_deletions(
         deleted_bytes += file_del.file_size
 
     if deleted_ids:
+        print(f"\n  Removing {len(deleted_ids)} deleted files from the database ...")
         delete_files(conn, deleted_ids)
         conn.commit()
 
@@ -786,13 +812,13 @@ def show_folder_menu(
 
         # accept_key is "d" or "D" → proceed with deletion
         if not selected_paths:
-            return None
+            continue  # Nothing selected — stay in menu
 
         all_with_dupes: set[str] = {s.folder for s in folder_stats}
         return _expand_selected_folders(sorted(selected_paths), all_with_dupes)
 
 
-def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
+def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path, force: bool) -> None:
     """Run the full interactive cleanup workflow.
 
     Builds duplicate groups, shows folder analysis, presents the TUI
@@ -802,6 +828,7 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
     Args:
         conn: An open SQLite connection to the files database.
         base_path: The resolved base directory that rel_path values are relative to.
+        force: If True, permanently delete files. If False (default), move to _DELETE/.
     """
     print("Analyzing duplicate files by folder...\n")
     groups: dict[str, list[DuplicateFile]] = build_duplicate_groups(conn)
@@ -810,6 +837,7 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
         print("No duplicates found.")
         return
 
+    print("  Computing folder statistics ...")
     folder_stats: list[FolderStats] = compute_folder_stats(groups)
     print(f"  {len(folder_stats)} folders with duplicates\n")
 
@@ -820,6 +848,7 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
             print("Cancelled.")
             return
 
+        print(f"\n  Planning deletions for {len(selected)} selected folders ...")
         plan: DeletionPlan = plan_deletions(
             selected_folders=selected,
             duplicate_groups=groups,
@@ -836,19 +865,21 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
             print("Returning to folder selection...\n")
             continue
 
-        result: DeletionResult = execute_deletions(conn=conn, base_path=base_path, plan=plan)
+        result: DeletionResult = execute_deletions(conn=conn, base_path=base_path, plan=plan, force=force)
 
-        print(f"\nDeleted: {result.deleted_count} files ({_format_size(result.deleted_bytes)})")
+        action_past: str = "Deleted" if force else "Moved"
+        print(f"\n{action_past}: {result.deleted_count} files ({_format_size(result.deleted_bytes)})")
         if result.failed_count > 0:
             print(f"Failed:  {result.failed_count} files (see warnings above)")
         if plan.protected_paths:
             print(f"Skipped: {len(plan.protected_paths)} files (last copy protection)")
 
         # Refresh duplicate groups — some may no longer exist after deletion
-        print("\nRefreshing duplicate analysis...\n")
+        print("\nRefreshing duplicate analysis ...\n")
         groups = build_duplicate_groups(conn)
         if not groups:
             print("\nNo more duplicates remaining.")
             return
+        print("  Computing folder statistics ...")
         folder_stats = compute_folder_stats(groups)
         print(f"  {len(folder_stats)} folders with duplicates\n")

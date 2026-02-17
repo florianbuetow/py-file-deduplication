@@ -298,8 +298,8 @@ class TestPlanDeletions:
 
 
 class TestExecuteDeletions:
-    def test_deletes_files_from_disk_and_db(self, tmp_path):
-        # Set up real files (including surviving copies)
+    def test_moves_files_to_delete_folder(self, tmp_path):
+        """Default behavior: files are moved to _DELETE/ preserving relative paths."""
         scan_dir = tmp_path / "files"
         (scan_dir / "backup").mkdir(parents=True)
         (scan_dir / "backup" / "a.raw").write_bytes(b"content_a")
@@ -308,7 +308,6 @@ class TestExecuteDeletions:
         (scan_dir / "orig" / "a.raw").write_bytes(b"content_a")
         (scan_dir / "orig" / "b.raw").write_bytes(b"content_b")
 
-        # Set up database
         conn = open_database(tmp_path / "test.db")
         id1 = _insert_hashed_file(conn, "a.raw", "backup/a.raw", ".raw", 9, "md5a", "shaa")
         id2 = _insert_hashed_file(conn, "b.raw", "backup/b.raw", ".raw", 9, "md5b", "shab")
@@ -322,21 +321,128 @@ class TestExecuteDeletions:
             total_bytes=18,
         )
 
-        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan)
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan, force=False)
+
+        assert result.deleted_count == 2
+        assert result.deleted_bytes == 18
+        assert result.failed_count == 0
+        # Originals gone from source
+        assert not (scan_dir / "backup" / "a.raw").exists()
+        assert not (scan_dir / "backup" / "b.raw").exists()
+        # Files moved to _DELETE/
+        assert (scan_dir / "_DELETE" / "backup" / "a.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup" / "b.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup" / "a.raw").read_bytes() == b"content_a"
+        assert (scan_dir / "_DELETE" / "backup" / "b.raw").read_bytes() == b"content_b"
+
+        # DB entries removed
+        cursor = conn.execute("SELECT COUNT(*) FROM files")
+        assert cursor.fetchone()[0] == 0
+        conn.close()
+
+    def test_move_preserves_directory_structure(self, tmp_path):
+        """Nested paths like backup/sub/a.raw -> _DELETE/backup/sub/a.raw."""
+        scan_dir = tmp_path / "files"
+        (scan_dir / "backup" / "sub").mkdir(parents=True)
+        (scan_dir / "backup" / "sub" / "a.raw").write_bytes(b"content_a")
+        (scan_dir / "orig").mkdir(parents=True)
+        (scan_dir / "orig" / "a.raw").write_bytes(b"content_a")
+
+        conn = open_database(tmp_path / "test.db")
+        file_id = _insert_hashed_file(conn, "a.raw", "backup/sub/a.raw", ".raw", 9, "md5a", "shaa")
+
+        plan = DeletionPlan(
+            deletions=[
+                FileDeletion(file_id=file_id, rel_path="backup/sub/a.raw", file_size=9, surviving_copy="orig/a.raw"),
+            ],
+            protected_paths=[],
+            total_bytes=9,
+        )
+
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan, force=False)
+
+        assert result.deleted_count == 1
+        assert not (scan_dir / "backup" / "sub" / "a.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup" / "sub" / "a.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup" / "sub" / "a.raw").read_bytes() == b"content_a"
+        conn.close()
+
+    def test_force_permanently_deletes(self, tmp_path):
+        """force=True uses unlink, no _DELETE/ folder created."""
+        scan_dir = tmp_path / "files"
+        (scan_dir / "backup").mkdir(parents=True)
+        (scan_dir / "backup" / "a.raw").write_bytes(b"content_a")
+        (scan_dir / "backup" / "b.raw").write_bytes(b"content_b")
+        (scan_dir / "orig").mkdir(parents=True)
+        (scan_dir / "orig" / "a.raw").write_bytes(b"content_a")
+        (scan_dir / "orig" / "b.raw").write_bytes(b"content_b")
+
+        conn = open_database(tmp_path / "test.db")
+        id1 = _insert_hashed_file(conn, "a.raw", "backup/a.raw", ".raw", 9, "md5a", "shaa")
+        id2 = _insert_hashed_file(conn, "b.raw", "backup/b.raw", ".raw", 9, "md5b", "shab")
+
+        plan = DeletionPlan(
+            deletions=[
+                FileDeletion(file_id=id1, rel_path="backup/a.raw", file_size=9, surviving_copy="orig/a.raw"),
+                FileDeletion(file_id=id2, rel_path="backup/b.raw", file_size=9, surviving_copy="orig/b.raw"),
+            ],
+            protected_paths=[],
+            total_bytes=18,
+        )
+
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan, force=True)
 
         assert result.deleted_count == 2
         assert result.deleted_bytes == 18
         assert result.failed_count == 0
         assert not (scan_dir / "backup" / "a.raw").exists()
         assert not (scan_dir / "backup" / "b.raw").exists()
+        # No _DELETE/ folder should exist
+        assert not (scan_dir / "_DELETE").exists()
 
-        # Verify DB entries removed
         cursor = conn.execute("SELECT COUNT(*) FROM files")
         assert cursor.fetchone()[0] == 0
         conn.close()
 
+    def test_move_skips_when_dest_exists(self, tmp_path):
+        """If dest already exists in _DELETE/, warn and count as failure."""
+        scan_dir = tmp_path / "files"
+        (scan_dir / "backup").mkdir(parents=True)
+        (scan_dir / "backup" / "a.raw").write_bytes(b"new_content")
+        (scan_dir / "orig").mkdir(parents=True)
+        (scan_dir / "orig" / "a.raw").write_bytes(b"new_content")
+
+        # Pre-create the destination in _DELETE/
+        (scan_dir / "_DELETE" / "backup").mkdir(parents=True)
+        (scan_dir / "_DELETE" / "backup" / "a.raw").write_bytes(b"old_content")
+
+        conn = open_database(tmp_path / "test.db")
+        file_id = _insert_hashed_file(conn, "a.raw", "backup/a.raw", ".raw", 11, "md5a", "shaa")
+
+        plan = DeletionPlan(
+            deletions=[
+                FileDeletion(file_id=file_id, rel_path="backup/a.raw", file_size=11, surviving_copy="orig/a.raw"),
+            ],
+            protected_paths=[],
+            total_bytes=11,
+        )
+
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan, force=False)
+
+        assert result.deleted_count == 0
+        assert result.failed_count == 1
+        assert result.failed_paths == ["backup/a.raw"]
+        # Source file still exists (not moved)
+        assert (scan_dir / "backup" / "a.raw").exists()
+        # Existing _DELETE/ file not overwritten
+        assert (scan_dir / "_DELETE" / "backup" / "a.raw").read_bytes() == b"old_content"
+        # DB entry still present
+        cursor = conn.execute("SELECT COUNT(*) FROM files")
+        assert cursor.fetchone()[0] == 1
+        conn.close()
+
     def test_handles_already_missing_file(self, tmp_path):
-        # File to delete doesn't exist on disk but is in DB; surviving copy exists
+        """File already gone from disk — DB entry cleaned up (default move mode)."""
         scan_dir = tmp_path / "files"
         (scan_dir / "orig").mkdir(parents=True)
         (scan_dir / "orig" / "gone.raw").write_bytes(b"content")
@@ -352,9 +458,34 @@ class TestExecuteDeletions:
             total_bytes=100,
         )
 
-        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan)
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan, force=False)
 
-        # Should succeed -- DB entry cleaned up even though file was already gone
+        assert result.deleted_count == 1
+        assert result.failed_count == 0
+
+        cursor = conn.execute("SELECT COUNT(*) FROM files")
+        assert cursor.fetchone()[0] == 0
+        conn.close()
+
+    def test_handles_already_missing_file_force(self, tmp_path):
+        """File already gone from disk — DB entry cleaned up (force mode)."""
+        scan_dir = tmp_path / "files"
+        (scan_dir / "orig").mkdir(parents=True)
+        (scan_dir / "orig" / "gone.raw").write_bytes(b"content")
+
+        conn = open_database(tmp_path / "test.db")
+        file_id = _insert_hashed_file(conn, "gone.raw", "backup/gone.raw", ".raw", 100, "md5g", "shag")
+
+        plan = DeletionPlan(
+            deletions=[
+                FileDeletion(file_id=file_id, rel_path="backup/gone.raw", file_size=100, surviving_copy="orig/gone.raw"),
+            ],
+            protected_paths=[],
+            total_bytes=100,
+        )
+
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan, force=True)
+
         assert result.deleted_count == 1
         assert result.failed_count == 0
 
@@ -367,7 +498,7 @@ class TestExecuteDeletions:
 
         plan = DeletionPlan(deletions=[], protected_paths=[], total_bytes=0)
 
-        result = execute_deletions(conn=conn, base_path=tmp_path, plan=plan)
+        result = execute_deletions(conn=conn, base_path=tmp_path, plan=plan, force=False)
 
         assert result.deleted_count == 0
         assert result.deleted_bytes == 0
@@ -392,7 +523,7 @@ class TestExecuteDeletions:
             total_bytes=9,
         )
 
-        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan)
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan, force=False)
 
         # Nothing should be deleted
         assert result.deleted_count == 0

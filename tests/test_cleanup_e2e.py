@@ -81,8 +81,8 @@ def _create_test_project(tmp_path):
 
 
 class TestCleanupE2E:
-    def test_full_pipeline_delete_one_folder(self, tmp_path):
-        """Scan, hash, analyze, delete backup1, verify."""
+    def test_full_pipeline_move_one_folder(self, tmp_path):
+        """Scan, hash, analyze, move backup1 to _DELETE/, verify."""
         project_root, scan_dir, db_path = _create_test_project(tmp_path)
 
         # Run scan and hash via CLI functions
@@ -110,17 +110,22 @@ class TestCleanupE2E:
         assert len(plan.deletions) == 2  # photo1 and photo2 in backup1
         assert len(plan.protected_paths) == 0  # copies survive in originals + backup2
 
-        # Execute
+        # Execute (default = move to _DELETE/)
         base_path = Path(scan_dir).resolve()
-        result = execute_deletions(conn=conn, base_path=base_path, plan=plan)
+        result = execute_deletions(conn=conn, base_path=base_path, plan=plan, force=False)
 
         assert result.deleted_count == 2
         assert result.failed_count == 0
 
-        # Verify disk state
+        # Verify files moved away from source
         assert not (scan_dir / "backup1" / "photo1.raw").exists()
         assert not (scan_dir / "backup1" / "photo2.raw").exists()
 
+        # Verify files landed in _DELETE/
+        assert (scan_dir / "_DELETE" / "backup1" / "photo1.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup1" / "photo2.raw").exists()
+
+        # Surviving copies untouched
         assert (scan_dir / "originals" / "photo1.raw").exists()
         assert (scan_dir / "originals" / "photo2.raw").exists()
         assert (scan_dir / "originals" / "photo3.raw").exists()
@@ -136,8 +141,36 @@ class TestCleanupE2E:
 
         conn.close()
 
-    def test_delete_multiple_folders(self, tmp_path):
-        """Delete both backup1 and backup2, originals survive."""
+    def test_force_delete_one_folder(self, tmp_path):
+        """force=True permanently deletes files (no _DELETE/ folder)."""
+        project_root, scan_dir, db_path = _create_test_project(tmp_path)
+
+        run_scan(project_root=project_root)
+        run_hash(project_root=project_root)
+
+        conn = open_database(db_path)
+        groups = build_duplicate_groups(conn)
+
+        plan = plan_deletions(selected_folders=["backup1"], duplicate_groups=groups)
+
+        base_path = Path(scan_dir).resolve()
+        result = execute_deletions(conn=conn, base_path=base_path, plan=plan, force=True)
+
+        assert result.deleted_count == 2
+        assert result.failed_count == 0
+
+        # Files permanently gone
+        assert not (scan_dir / "backup1" / "photo1.raw").exists()
+        assert not (scan_dir / "backup1" / "photo2.raw").exists()
+
+        # No _DELETE/ folder created
+        assert not (scan_dir / "_DELETE").exists()
+
+        assert count_total_files(conn) == 7
+        conn.close()
+
+    def test_move_multiple_folders(self, tmp_path):
+        """Move both backup1 and backup2 to _DELETE/, originals survive."""
         project_root, scan_dir, db_path = _create_test_project(tmp_path)
 
         run_scan(project_root=project_root)
@@ -151,7 +184,7 @@ class TestCleanupE2E:
         assert len(plan.deletions) == 5
         assert len(plan.protected_paths) == 0  # originals always safe
 
-        result = execute_deletions(conn=conn, base_path=scan_dir.resolve(), plan=plan)
+        result = execute_deletions(conn=conn, base_path=scan_dir.resolve(), plan=plan, force=False)
         assert result.deleted_count == 5
 
         # All originals and unique_folder survive
@@ -159,6 +192,13 @@ class TestCleanupE2E:
         assert (scan_dir / "originals" / "photo2.raw").exists()
         assert (scan_dir / "originals" / "photo3.raw").exists()
         assert (scan_dir / "unique_folder" / "solo.raw").exists()
+
+        # Files landed in _DELETE/
+        assert (scan_dir / "_DELETE" / "backup1" / "photo1.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup1" / "photo2.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup2" / "photo1.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup2" / "photo2.raw").exists()
+        assert (scan_dir / "_DELETE" / "backup2" / "photo3.raw").exists()
 
         assert count_total_files(conn) == 4  # 9 - 5
         conn.close()
@@ -185,10 +225,10 @@ class TestCleanupE2E:
         # Total files to delete: group1 has 3 copies (del 2), group2 has 3 (del 2), group3 has 2 (del 1) = 5
         assert len(plan.deletions) == 5
 
-        result = execute_deletions(conn=conn, base_path=scan_dir.resolve(), plan=plan)
+        result = execute_deletions(conn=conn, base_path=scan_dir.resolve(), plan=plan, force=False)
         assert result.deleted_count == 5
 
-        # Verify exactly one copy of each content survives
+        # Verify exactly one copy of each content survives (on disk, not in _DELETE/)
         photo1_survivors = []
         photo2_survivors = []
         photo3_survivors = []
@@ -255,15 +295,19 @@ class TestCleanupE2E:
         assert len(plan.protected_paths) == 1
         assert plan.protected_paths[0] == "photos/IMG_001.raw"  # alphabetically first
 
-        result = execute_deletions(conn=conn, base_path=scan_dir.resolve(), plan=plan)
+        result = execute_deletions(conn=conn, base_path=scan_dir.resolve(), plan=plan, force=False)
         assert result.deleted_count == 2
         assert result.failed_count == 0
 
-        # Verify exactly one file survives on disk
-        remaining = list(photos.iterdir())
+        # Verify exactly one file survives on disk (not moved since protected)
+        remaining = [f for f in photos.iterdir() if f.name != "_DELETE"]
         assert len(remaining) == 1
         assert remaining[0].name == "IMG_001.raw"
         assert remaining[0].read_bytes() == content
+
+        # Moved files should be in _DELETE/
+        assert (scan_dir / "_DELETE" / "photos" / "IMG_001_copy.raw").exists()
+        assert (scan_dir / "_DELETE" / "photos" / "IMG_001_v2.raw").exists()
 
         # Verify DB has exactly one record
         assert count_total_files(conn) == 1

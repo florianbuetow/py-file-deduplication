@@ -45,6 +45,14 @@ cleanup:
     @uv run src/cleanup.py
     @printf "\n"
 
+# Interactively select and permanently delete duplicate files (no trash)
+[group('app')]
+cleanup-force:
+    @printf "\n"
+    @printf "\033[0;34m=== Cleanup Duplicates (Force Delete) ===\033[0m\n"
+    @uv run src/cleanup.py --force
+    @printf "\n"
+
 # Delete the database (requires typing 'destroy' to confirm)
 [group('app')]
 reset:

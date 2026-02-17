@@ -123,7 +123,7 @@ def run_duplicates(project_root: Path) -> None:
         conn.close()
 
 
-def run_cleanup(project_root: Path) -> None:
+def run_cleanup(project_root: Path, force: bool) -> None:
     """Run the interactive duplicate cleanup.
 
     Loads config, opens the database, and launches the interactive
@@ -131,6 +131,7 @@ def run_cleanup(project_root: Path) -> None:
 
     Args:
         project_root: Absolute path to the project root directory.
+        force: If True, permanently delete files instead of moving to _DELETE/.
     """
     config, conn, db_path = _resolve_config_and_db(project_root)
     print(f"Database: {db_path}")
@@ -144,6 +145,6 @@ def run_cleanup(project_root: Path) -> None:
     base_path: Path = Path(config.paths[0]).resolve()
 
     try:
-        run_cleanup_interactive(conn=conn, base_path=base_path)
+        run_cleanup_interactive(conn=conn, base_path=base_path, force=force)
     finally:
         conn.close()
