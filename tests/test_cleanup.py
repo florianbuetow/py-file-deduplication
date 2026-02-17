@@ -249,6 +249,43 @@ class TestPlanDeletions:
         assert len(plan.protected_paths) == 1
         assert plan.protected_paths[0] == "also_doomed/b.raw"
 
+    def test_all_duplicates_in_same_folder(self):
+        groups = {
+            "1000_md5_sha": [
+                DuplicateFile(file_id=1, rel_path="photos/IMG_001.raw", file_size=1000, group_key="1000_md5_sha", folder="photos"),
+                DuplicateFile(file_id=2, rel_path="photos/IMG_001_copy.raw", file_size=1000, group_key="1000_md5_sha", folder="photos"),
+            ]
+        }
+
+        plan = plan_deletions(selected_folders=["photos"], duplicate_groups=groups)
+
+        # One copy protected (alphabetically first: photos/IMG_001.raw)
+        assert len(plan.deletions) == 1
+        assert plan.deletions[0].rel_path == "photos/IMG_001_copy.raw"
+        assert plan.deletions[0].surviving_copy == "photos/IMG_001.raw"
+        assert len(plan.protected_paths) == 1
+        assert plan.protected_paths[0] == "photos/IMG_001.raw"
+        assert plan.total_bytes == 1000
+
+    def test_three_duplicates_in_same_folder(self):
+        groups = {
+            "1000_md5_sha": [
+                DuplicateFile(file_id=1, rel_path="photos/IMG_001.raw", file_size=1000, group_key="1000_md5_sha", folder="photos"),
+                DuplicateFile(file_id=2, rel_path="photos/IMG_001_copy.raw", file_size=1000, group_key="1000_md5_sha", folder="photos"),
+                DuplicateFile(file_id=3, rel_path="photos/IMG_001_v2.raw", file_size=1000, group_key="1000_md5_sha", folder="photos"),
+            ]
+        }
+
+        plan = plan_deletions(selected_folders=["photos"], duplicate_groups=groups)
+
+        # photos/IMG_001.raw survives, other two deleted
+        assert len(plan.deletions) == 2
+        deleted_paths = {d.rel_path for d in plan.deletions}
+        assert deleted_paths == {"photos/IMG_001_copy.raw", "photos/IMG_001_v2.raw"}
+        assert plan.protected_paths == ["photos/IMG_001.raw"]
+        for d in plan.deletions:
+            assert d.surviving_copy == "photos/IMG_001.raw"
+
     def test_empty_groups(self):
         plan = plan_deletions(selected_folders=["any"], duplicate_groups={})
         assert len(plan.deletions) == 0

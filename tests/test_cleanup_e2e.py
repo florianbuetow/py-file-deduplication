@@ -211,6 +211,64 @@ class TestCleanupE2E:
         assert count_total_files(conn) == 4
         conn.close()
 
+    def test_all_duplicates_in_same_folder(self, tmp_path):
+        """Duplicates with different names in the same folder — last-copy protection must keep one."""
+        scan_dir = tmp_path / "files"
+        photos = scan_dir / "photos"
+        photos.mkdir(parents=True)
+
+        content = b"X" * 2048
+        (photos / "IMG_001.raw").write_bytes(content)
+        (photos / "IMG_001_copy.raw").write_bytes(content)
+        (photos / "IMG_001_v2.raw").write_bytes(content)
+
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        db_path = project_root / "data" / "files.db"
+        config = {
+            "paths": [str(scan_dir)],
+            "extensions": [".raw"],
+            "case_sensitive": False,
+            "recursive": True,
+            "skip_dirs": [],
+            "database": str(db_path),
+        }
+        (project_root / "config.yaml").write_text(yaml.dump(config))
+
+        run_scan(project_root=project_root)
+        run_hash(project_root=project_root)
+
+        conn = open_database(db_path)
+        assert count_total_files(conn) == 3
+
+        groups = build_duplicate_groups(conn)
+        assert len(groups) == 1  # one group of 3 identical files
+
+        folder_stats = compute_folder_stats(groups)
+        assert len(folder_stats) == 1
+        assert folder_stats[0].folder == "photos"
+        assert folder_stats[0].duplicate_count == 3
+
+        # Select the only folder — last-copy protection must keep one
+        plan = plan_deletions(selected_folders=["photos"], duplicate_groups=groups)
+        assert len(plan.deletions) == 2
+        assert len(plan.protected_paths) == 1
+        assert plan.protected_paths[0] == "photos/IMG_001.raw"  # alphabetically first
+
+        result = execute_deletions(conn=conn, base_path=scan_dir.resolve(), plan=plan)
+        assert result.deleted_count == 2
+        assert result.failed_count == 0
+
+        # Verify exactly one file survives on disk
+        remaining = list(photos.iterdir())
+        assert len(remaining) == 1
+        assert remaining[0].name == "IMG_001.raw"
+        assert remaining[0].read_bytes() == content
+
+        # Verify DB has exactly one record
+        assert count_total_files(conn) == 1
+        conn.close()
+
     def test_folder_ranking_order(self, tmp_path):
         """Verify folder stats are sorted by duplicate count descending."""
         project_root, scan_dir, db_path = _create_test_project(tmp_path)
