@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pyyaml>=6.0.0",
+    "simple-term-menu>=1.6.0",
 ]
 
 [build-system]

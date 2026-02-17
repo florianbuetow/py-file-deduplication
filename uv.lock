@@ -1481,6 +1481,7 @@ version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },
+    { name = "simple-term-menu" },
 ]
 
 [package.optional-dependencies]
@@ -1521,6 +1522,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "semgrep", marker = "extra == 'dev'", specifier = ">=1.144.0" },
+    { name = "simple-term-menu", specifier = ">=1.6.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
 ]
 provides-extras = ["dev"]
@@ -1777,6 +1779,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/49/6f4c6419d789d23fdda959b8b0360f5eb8d61d3f5887caba208e9892cc51/semgrep-1.151.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-musllinux_1_0_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c9d61dc8c24615bfaedb3c08bd40d328ab3d33ca1f15600f8179ef61de599694", size = 54402517, upload-time = "2026-02-04T18:37:10.73Z" },
     { url = "https://files.pythonhosted.org/packages/b8/4b/91d05acc6a53175815401acf6e27ea702af91de74b185063278fdffe08a5/semgrep-1.151.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-musllinux_1_0_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2ffe0351049ce466953043a4a01f91c56ea1acfd179c9ade0c0ff17d2b2861aa", size = 50490352, upload-time = "2026-02-04T18:37:13.557Z" },
     { url = "https://files.pythonhosted.org/packages/15/56/93f6bc010b00a94c4399688e642aaf70626f419e37f4d3b6d7120a1d9e71/semgrep-1.151.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-win_amd64.whl", hash = "sha256:9a63d9b29eac99a0a916466cd8de7fd1f1a9fab16b5ae8afe3dd6496292505d6", size = 43001178, upload-time = "2026-02-04T18:37:16.712Z" },
+]
+
+[[package]]
+name = "simple-term-menu"
+version = "1.6.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/80/f0f10b4045628645a841d3d98b584a8699005ee03a211fc7c45f6c6f0e99/simple_term_menu-1.6.6.tar.gz", hash = "sha256:9813d36f5749d62d200a5599b1ec88469c71378312adc084c00c00bfbb383893", size = 35493, upload-time = "2024-12-02T16:31:50.639Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/09/21d993e394c1fe5c44cd90453d88ed44932da8dfca006e424c072d77d29b/simple_term_menu-1.6.6-py3-none-any.whl", hash = "sha256:c2a869efa7a9f7e4a9c25858b42ca6974034951c137d5e281f5339b06ed8c9c2", size = 27600, upload-time = "2024-12-02T16:31:48.934Z" },
 ]
 
 [[package]]
