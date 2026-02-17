@@ -251,7 +251,7 @@ tests/
 
 ## Known Limitations
 
-- Currently supports only a single scan directory. While `config.yaml` accepts a `paths` list, the hash, cleanup, and scan-update commands require exactly one path to resolve relative file locations.
+- Currently supports only a single scan directory. File paths in the database are stored relative to the configured scan path. Changing the scan path in `config.yaml` after files have been indexed breaks the relationship between database entries and files on disk, so hash, cleanup, and scan-update commands require exactly one path.
 
 ## License
 
