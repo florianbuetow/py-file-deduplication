@@ -157,3 +157,37 @@ def build_duplicate_groups(conn: sqlite3.Connection) -> dict[str, list[Duplicate
         )
 
     return {k: v for k, v in index.items() if len(v) > 1}
+
+
+def compute_folder_stats(duplicate_groups: dict[str, list[DuplicateFile]]) -> list[FolderStats]:
+    """Compute per-folder statistics from duplicate groups.
+
+    Aggregates duplicate files by folder and sorts by duplicate count
+    descending, with reclaimable bytes as a secondary sort key.
+
+    Args:
+        duplicate_groups: Dict mapping group keys to lists of DuplicateFile.
+
+    Returns:
+        A list of FolderStats sorted by duplicate_count descending,
+        then reclaimable_bytes descending.
+    """
+    folder_files: dict[str, list[DuplicateFile]] = defaultdict(list)
+
+    for files in duplicate_groups.values():
+        for dup_file in files:
+            folder_files[dup_file.folder].append(dup_file)
+
+    stats: list[FolderStats] = []
+    for folder, files in folder_files.items():
+        stats.append(
+            FolderStats(
+                folder=folder,
+                duplicate_count=len(files),
+                reclaimable_bytes=sum(f.file_size for f in files),
+                files=files,
+            )
+        )
+
+    stats.sort(key=lambda s: (-s.duplicate_count, -s.reclaimable_bytes))
+    return stats

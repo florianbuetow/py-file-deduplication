@@ -1,6 +1,6 @@
 """Tests for the cleanup module."""
 
-from app.cleanup import DuplicateFile, build_duplicate_groups
+from app.cleanup import DuplicateFile, FolderStats, build_duplicate_groups, compute_folder_stats
 from app.database import insert_file, open_database, update_hashes
 
 
@@ -87,3 +87,66 @@ class TestBuildDuplicateGroups:
         assert files[1].file_id == id1  # originals/a.raw
         assert files[1].folder == "originals"
         conn.close()
+
+
+class TestComputeFolderStats:
+    def test_empty_groups(self):
+        stats = compute_folder_stats({})
+        assert len(stats) == 0
+
+    def test_single_group_two_folders(self):
+        groups = {
+            "1000_md5_sha": [
+                DuplicateFile(file_id=1, rel_path="originals/a.raw", file_size=1000, group_key="1000_md5_sha", folder="originals"),
+                DuplicateFile(file_id=2, rel_path="backup/a.raw", file_size=1000, group_key="1000_md5_sha", folder="backup"),
+            ]
+        }
+        stats = compute_folder_stats(groups)
+
+        assert len(stats) == 2
+        folders = {s.folder for s in stats}
+        assert folders == {"originals", "backup"}
+        assert stats[0].duplicate_count == 1
+        assert stats[0].reclaimable_bytes == 1000
+
+    def test_sorted_by_duplicate_count_descending(self):
+        groups = {
+            "1000_md5a_shaa": [
+                DuplicateFile(file_id=1, rel_path="few/a.raw", file_size=1000, group_key="1000_md5a_shaa", folder="few"),
+                DuplicateFile(file_id=2, rel_path="many/a.raw", file_size=1000, group_key="1000_md5a_shaa", folder="many"),
+            ],
+            "2000_md5b_shab": [
+                DuplicateFile(file_id=3, rel_path="many/b.raw", file_size=2000, group_key="2000_md5b_shab", folder="many"),
+                DuplicateFile(file_id=4, rel_path="few/b.raw", file_size=2000, group_key="2000_md5b_shab", folder="few"),
+            ],
+            "3000_md5c_shac": [
+                DuplicateFile(file_id=5, rel_path="many/c.raw", file_size=3000, group_key="3000_md5c_shac", folder="many"),
+                DuplicateFile(file_id=6, rel_path="other/c.raw", file_size=3000, group_key="3000_md5c_shac", folder="other"),
+            ],
+        }
+        stats = compute_folder_stats(groups)
+
+        # "many" has 3 dupes, "few" has 2, "other" has 1
+        assert stats[0].folder == "many"
+        assert stats[0].duplicate_count == 3
+        assert stats[1].folder == "few"
+        assert stats[1].duplicate_count == 2
+        assert stats[2].folder == "other"
+        assert stats[2].duplicate_count == 1
+
+    def test_secondary_sort_by_reclaimable_bytes(self):
+        groups = {
+            "1000_md5a_shaa": [
+                DuplicateFile(file_id=1, rel_path="small/a.raw", file_size=1000, group_key="1000_md5a_shaa", folder="small"),
+                DuplicateFile(file_id=2, rel_path="big/a.raw", file_size=1000, group_key="1000_md5a_shaa", folder="big"),
+            ],
+            "5000_md5b_shab": [
+                DuplicateFile(file_id=3, rel_path="big/b.raw", file_size=5000, group_key="5000_md5b_shab", folder="big"),
+                DuplicateFile(file_id=4, rel_path="small/b.raw", file_size=5000, group_key="5000_md5b_shab", folder="small"),
+            ],
+        }
+        stats = compute_folder_stats(groups)
+
+        # Both have 2 dupes, both have 6000 bytes — tied, order is stable
+        assert stats[0].duplicate_count == 2
+        assert stats[1].duplicate_count == 2
