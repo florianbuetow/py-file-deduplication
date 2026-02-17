@@ -5,6 +5,7 @@ from app.cleanup import (
     DuplicateFile,
     FileDeletion,
     FolderStats,
+    _build_folder_detail_lines,
     _expand_selected_folders,
     build_duplicate_groups,
     build_folder_tree_entries,
@@ -656,3 +657,106 @@ class TestExpandSelectedFolders:
         # Selecting both "a" (parent) and "a/b" (child) should not duplicate
         result = _expand_selected_folders(["a", "a/b"], all_with_dupes)
         assert result == ["a/b", "a/c"]
+
+
+class TestBuildFolderDetailLines:
+    def test_folder_not_in_stats(self):
+        lines = _build_folder_detail_lines("nonexistent", {}, {})
+        assert lines == ["No duplicate files in nonexistent/"]
+
+    def test_single_file_two_copies(self):
+        dup1 = DuplicateFile(1, "backup/a.raw", 1000, "grp1", "backup")
+        dup2 = DuplicateFile(2, "originals/a.raw", 1000, "grp1", "originals")
+        stats_by_folder = {
+            "backup": FolderStats("backup", 1, 1000, [dup1]),
+        }
+        duplicate_groups = {"grp1": [dup1, dup2]}
+
+        lines = _build_folder_detail_lines("backup", stats_by_folder, duplicate_groups)
+
+        assert lines[0] == "Duplicate files in backup/ (1 files):"
+        assert "  a.raw  (1000 B) — 2 copies:" in lines
+        assert "    backup/a.raw" in lines
+        assert "    originals/a.raw" in lines
+
+    def test_multiple_files_sorted_by_copy_count(self):
+        # File with 3 copies
+        dup_a1 = DuplicateFile(1, "folder/a.raw", 1000, "grpA", "folder")
+        dup_a2 = DuplicateFile(2, "copy1/a.raw", 1000, "grpA", "copy1")
+        dup_a3 = DuplicateFile(3, "copy2/a.raw", 1000, "grpA", "copy2")
+        # File with 2 copies
+        dup_b1 = DuplicateFile(4, "folder/b.raw", 2000, "grpB", "folder")
+        dup_b2 = DuplicateFile(5, "copy1/b.raw", 2000, "grpB", "copy1")
+
+        stats_by_folder = {
+            "folder": FolderStats("folder", 2, 3000, [dup_a1, dup_b1]),
+        }
+        duplicate_groups = {
+            "grpA": [dup_a1, dup_a2, dup_a3],
+            "grpB": [dup_b1, dup_b2],
+        }
+
+        lines = _build_folder_detail_lines("folder", stats_by_folder, duplicate_groups)
+
+        # a.raw (3 copies) should appear before b.raw (2 copies)
+        a_idx = next(i for i, line in enumerate(lines) if "a.raw" in line and "copies" in line)
+        b_idx = next(i for i, line in enumerate(lines) if "b.raw" in line and "copies" in line)
+        assert a_idx < b_idx
+        assert "3 copies" in lines[a_idx]
+        assert "2 copies" in lines[b_idx]
+
+    def test_same_copy_count_sorted_by_filename(self):
+        dup_z = DuplicateFile(1, "folder/zebra.raw", 1000, "grpZ", "folder")
+        dup_z2 = DuplicateFile(2, "other/zebra.raw", 1000, "grpZ", "other")
+        dup_a = DuplicateFile(3, "folder/alpha.raw", 2000, "grpA", "folder")
+        dup_a2 = DuplicateFile(4, "other/alpha.raw", 2000, "grpA", "other")
+
+        stats_by_folder = {
+            "folder": FolderStats("folder", 2, 3000, [dup_z, dup_a]),
+        }
+        duplicate_groups = {
+            "grpZ": [dup_z, dup_z2],
+            "grpA": [dup_a, dup_a2],
+        }
+
+        lines = _build_folder_detail_lines("folder", stats_by_folder, duplicate_groups)
+
+        # Same copy count (2 each) → sorted alphabetically: alpha before zebra
+        a_idx = next(i for i, line in enumerate(lines) if "alpha.raw" in line and "copies" in line)
+        z_idx = next(i for i, line in enumerate(lines) if "zebra.raw" in line and "copies" in line)
+        assert a_idx < z_idx
+
+    def test_deduplicates_same_group(self):
+        # Two files in same folder from same group (unusual but possible)
+        dup1 = DuplicateFile(1, "folder/a.raw", 1000, "grp1", "folder")
+        dup2 = DuplicateFile(2, "folder/a_copy.raw", 1000, "grp1", "folder")
+        dup3 = DuplicateFile(3, "other/a.raw", 1000, "grp1", "other")
+
+        stats_by_folder = {
+            "folder": FolderStats("folder", 2, 2000, [dup1, dup2]),
+        }
+        duplicate_groups = {"grp1": [dup1, dup2, dup3]}
+
+        lines = _build_folder_detail_lines("folder", stats_by_folder, duplicate_groups)
+
+        # Should show as 1 file entry (deduplicated by group_key)
+        assert lines[0] == "Duplicate files in folder/ (1 files):"
+        assert "3 copies" in "\n".join(lines)
+
+    def test_copy_paths_sorted(self):
+        dup1 = DuplicateFile(1, "z_folder/a.raw", 1000, "grp1", "z_folder")
+        dup2 = DuplicateFile(2, "a_folder/a.raw", 1000, "grp1", "a_folder")
+        dup3 = DuplicateFile(3, "m_folder/a.raw", 1000, "grp1", "m_folder")
+
+        stats_by_folder = {
+            "z_folder": FolderStats("z_folder", 1, 1000, [dup1]),
+        }
+        duplicate_groups = {"grp1": [dup1, dup2, dup3]}
+
+        lines = _build_folder_detail_lines("z_folder", stats_by_folder, duplicate_groups)
+
+        # Copy paths should be sorted alphabetically
+        path_lines = [entry for entry in lines if entry.startswith("    ")]
+        assert path_lines[0] == "    a_folder/a.raw"
+        assert path_lines[1] == "    m_folder/a.raw"
+        assert path_lines[2] == "    z_folder/a.raw"

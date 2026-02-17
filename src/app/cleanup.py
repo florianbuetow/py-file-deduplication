@@ -500,9 +500,7 @@ def execute_deletions(
     # Without this, we could delete a file whose "surviving copy" is
     # already gone from disk (but still in the DB), causing data loss.
     surviving_copies: set[str] = {d.surviving_copy for d in plan.deletions}
-    missing_survivors: list[str] = [
-        rel_path for rel_path in sorted(surviving_copies) if not (base_path / rel_path).exists()
-    ]
+    missing_survivors: list[str] = [rel_path for rel_path in sorted(surviving_copies) if not (base_path / rel_path).exists()]
     if missing_survivors:
         print("\n  ABORT: Surviving copies missing from disk — deletion blocked to prevent data loss.")
         print(f"  {len(missing_survivors)} surviving copies not found:\n")
@@ -576,6 +574,55 @@ def print_dry_run_report(plan: DeletionPlan) -> None:
     print()
 
 
+def _build_folder_detail_lines(
+    folder: str,
+    stats_by_folder: dict[str, FolderStats],
+    duplicate_groups: dict[str, list[DuplicateFile]],
+) -> list[str]:
+    """Build detail lines showing duplicate files in a folder with all copy paths.
+
+    For each unique duplicate group present in the folder, shows the filename,
+    size, copy count, and all copy paths. Sorted by copy count descending,
+    then by filename ascending.
+
+    Args:
+        folder: The folder path to show details for.
+        stats_by_folder: Lookup from folder path to FolderStats.
+        duplicate_groups: All duplicate groups for copy lookup.
+
+    Returns:
+        List of formatted strings for display.
+    """
+    if folder not in stats_by_folder:
+        return [f"No duplicate files in {folder}/"]
+
+    folder_stat: FolderStats = stats_by_folder[folder]
+
+    seen_groups: set[str] = set()
+    file_details: list[tuple[int, str, int, list[str]]] = []
+    for f in folder_stat.files:
+        if f.group_key in seen_groups:
+            continue
+        seen_groups.add(f.group_key)
+        group: list[DuplicateFile] = duplicate_groups[f.group_key]
+        copy_paths: list[str] = sorted(df.rel_path for df in group)
+        filename: str = PurePosixPath(f.rel_path).name
+        file_details.append((len(copy_paths), filename, f.file_size, copy_paths))
+
+    file_details.sort(key=lambda x: (-x[0], x[1]))
+
+    lines: list[str] = []
+    lines.append(f"Duplicate files in {folder}/ ({len(file_details)} files):")
+    lines.append("")
+    for copy_count, filename, file_size, paths in file_details:
+        size_str: str = _format_size(file_size)
+        lines.append(f"  {filename}  ({size_str}) — {copy_count} copies:")
+        lines.extend(f"    {path}" for path in paths)
+        lines.append("")
+
+    return lines
+
+
 def _make_status_callback(
     entry_to_folder: dict[str, str],
     stats_by_folder: dict[str, FolderStats],
@@ -629,22 +676,28 @@ def _result_to_folder_paths(
     return {index_to_folder[i] for i in indices if i in index_to_folder}
 
 
-def show_folder_menu(folder_stats: list[FolderStats]) -> list[str] | None:
+def show_folder_menu(
+    folder_stats: list[FolderStats],
+    duplicate_groups: dict[str, list[DuplicateFile]],
+) -> list[str] | None:
     """Show an interactive folder selection menu as an expandable ASCII tree.
 
     Displays folders in a tree hierarchy with ASCII connectors, sorted
     alphabetically at each level. Folders start collapsed and can be
-    expanded/collapsed with Enter. Tab toggles folder selection.
+    expanded/collapsed with Enter. Space toggles folder selection.
+    Tab shows duplicate file details for the highlighted folder.
     Pressing d/D proceeds with deletion of selected folders.
 
     Keys:
         Space: toggle folder selection.
         Enter: expand/collapse folder.
+        Tab: show duplicate file details for highlighted folder.
         d/D: confirm selection and proceed to deletion.
         Escape/q: cancel.
 
     Args:
         folder_stats: List of FolderStats to display.
+        duplicate_groups: All duplicate groups for file detail lookup.
 
     Returns:
         List of selected folder name strings, or None if cancelled/empty.
@@ -675,16 +728,16 @@ def show_folder_menu(folder_stats: list[FolderStats]) -> list[str] | None:
         # Restore selections as indices
         preselected: list[int] = [folder_to_idx[f] for f in selected_paths if f in folder_to_idx]
 
-        menu: TerminalMenu = TerminalMenu(
+        menu = TerminalMenu(
             entries,
             title="Select folders to remove duplicates from:",
             multi_select=True,
             multi_select_keys=(" ",),
-            accept_keys=("enter", "d", "D"),
+            accept_keys=("enter", "tab", "d", "D"),
             multi_select_select_on_accept=False,
             multi_select_empty_ok=True,
             show_multi_select_hint=True,
-            show_multi_select_hint_text=("<space>: select  <enter>: expand/collapse  <d>: delete selected"),
+            show_multi_select_hint_text=("<space>: select  <enter>: expand/collapse  <tab>: details  <d>: delete selected"),
             cursor_index=cursor_pos,
             preselected_entries=preselected or None,
             status_bar=_make_status_callback(entry_to_folder, stats_by_folder),
@@ -708,6 +761,16 @@ def show_folder_menu(folder_stats: list[FolderStats]) -> list[str] | None:
             # Toggle expand/collapse
             if cursor_folder and cursor_folder in expandable:
                 expanded.symmetric_difference_update({cursor_folder})
+            continue
+
+        if accept_key == "tab":
+            # Show duplicate file details for highlighted folder
+            if cursor_folder:
+                detail_lines: list[str] = _build_folder_detail_lines(cursor_folder, stats_by_folder, duplicate_groups)
+                print()
+                for line in detail_lines:
+                    print(line)
+                input("Press Enter to return.")
             continue
 
         # accept_key is "d" or "D" → proceed with deletion
@@ -740,7 +803,7 @@ def run_cleanup_interactive(conn: sqlite3.Connection, base_path: Path) -> None:
     print(f"Found {len(groups)} duplicate groups across {len(folder_stats)} folders.\n")
 
     while True:
-        selected: list[str] | None = show_folder_menu(folder_stats)
+        selected: list[str] | None = show_folder_menu(folder_stats, groups)
 
         if selected is None:
             print("Cancelled.")
