@@ -249,6 +249,10 @@ tests/
 - `simple-term-menu` is used for the interactive TUI (lazy-imported only when a terminal is available)
 - The cleanup module exposes analysis and deletion functions separately from the TUI, so tests can exercise the full pipeline without needing terminal interaction
 
+## Known Limitations
+
+- Currently supports only a single scan directory. While `config.yaml` accepts a `paths` list, the hash, cleanup, and scan-update commands require exactly one path to resolve relative file locations.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
