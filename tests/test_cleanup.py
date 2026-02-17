@@ -1,12 +1,16 @@
 """Tests for the cleanup module."""
 
+from pathlib import Path
+
 from app.cleanup import (
     DeletionPlan,
+    DeletionResult,
     DuplicateFile,
     FileDeletion,
     FolderStats,
     build_duplicate_groups,
     compute_folder_stats,
+    execute_deletions,
     plan_deletions,
 )
 from app.database import insert_file, open_database, update_hashes
@@ -254,3 +258,77 @@ class TestPlanDeletions:
         assert len(plan.deletions) == 0
         assert len(plan.protected_paths) == 0
         assert plan.total_bytes == 0
+
+
+class TestExecuteDeletions:
+    def test_deletes_files_from_disk_and_db(self, tmp_path):
+        # Set up real files
+        scan_dir = tmp_path / "files"
+        (scan_dir / "backup").mkdir(parents=True)
+        (scan_dir / "backup" / "a.raw").write_bytes(b"content_a")
+        (scan_dir / "backup" / "b.raw").write_bytes(b"content_b")
+
+        # Set up database
+        conn = open_database(tmp_path / "test.db")
+        id1 = _insert_hashed_file(conn, "a.raw", "backup/a.raw", ".raw", 9, "md5a", "shaa")
+        id2 = _insert_hashed_file(conn, "b.raw", "backup/b.raw", ".raw", 9, "md5b", "shab")
+
+        plan = DeletionPlan(
+            deletions=[
+                FileDeletion(file_id=id1, rel_path="backup/a.raw", file_size=9, surviving_copy="orig/a.raw"),
+                FileDeletion(file_id=id2, rel_path="backup/b.raw", file_size=9, surviving_copy="orig/b.raw"),
+            ],
+            protected_paths=[],
+            total_bytes=18,
+        )
+
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan)
+
+        assert result.deleted_count == 2
+        assert result.deleted_bytes == 18
+        assert result.failed_count == 0
+        assert not (scan_dir / "backup" / "a.raw").exists()
+        assert not (scan_dir / "backup" / "b.raw").exists()
+
+        # Verify DB entries removed
+        cursor = conn.execute("SELECT COUNT(*) FROM files")
+        assert cursor.fetchone()[0] == 0
+        conn.close()
+
+    def test_handles_already_missing_file(self, tmp_path):
+        # File doesn't exist on disk but is in DB
+        conn = open_database(tmp_path / "test.db")
+        file_id = _insert_hashed_file(conn, "gone.raw", "backup/gone.raw", ".raw", 100, "md5g", "shag")
+
+        plan = DeletionPlan(
+            deletions=[
+                FileDeletion(file_id=file_id, rel_path="backup/gone.raw", file_size=100, surviving_copy="orig/gone.raw"),
+            ],
+            protected_paths=[],
+            total_bytes=100,
+        )
+
+        scan_dir = tmp_path / "files"
+        scan_dir.mkdir()
+
+        result = execute_deletions(conn=conn, base_path=scan_dir, plan=plan)
+
+        # Should succeed -- DB entry cleaned up even though file was already gone
+        assert result.deleted_count == 1
+        assert result.failed_count == 0
+
+        cursor = conn.execute("SELECT COUNT(*) FROM files")
+        assert cursor.fetchone()[0] == 0
+        conn.close()
+
+    def test_empty_plan(self, tmp_path):
+        conn = open_database(tmp_path / "test.db")
+
+        plan = DeletionPlan(deletions=[], protected_paths=[], total_bytes=0)
+
+        result = execute_deletions(conn=conn, base_path=tmp_path, plan=plan)
+
+        assert result.deleted_count == 0
+        assert result.deleted_bytes == 0
+        assert result.failed_count == 0
+        conn.close()

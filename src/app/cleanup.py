@@ -7,10 +7,11 @@ with last-copy safety protection.
 
 import dataclasses
 import sqlite3
+import sys
 from collections import defaultdict
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
-from app.database import iter_hashed_files_with_id
+from app.database import delete_files, iter_hashed_files_with_id
 
 _GB: int = 1024**3
 _MB: int = 1024**2
@@ -252,4 +253,53 @@ def plan_deletions(
         deletions=deletions,
         protected_paths=protected_paths,
         total_bytes=total_bytes,
+    )
+
+
+def execute_deletions(
+    conn: sqlite3.Connection,
+    base_path: Path,
+    plan: DeletionPlan,
+) -> DeletionResult:
+    """Execute file deletions from disk and database.
+
+    For each file in the deletion plan, removes it from disk (if present)
+    and from the database. Files already missing from disk are still
+    cleaned up in the database. Files that cannot be deleted due to
+    OS errors are tracked as failures.
+
+    Args:
+        conn: An open SQLite connection to the files database.
+        base_path: The resolved base directory that rel_path values are relative to.
+        plan: The deletion plan to execute.
+
+    Returns:
+        A DeletionResult with counts and paths of deleted and failed files.
+    """
+    deleted_ids: list[int] = []
+    deleted_bytes: int = 0
+    failed_paths: list[str] = []
+
+    for file_del in plan.deletions:
+        full_path: Path = base_path / file_del.rel_path
+
+        try:
+            full_path.unlink(missing_ok=True)
+        except OSError as err:
+            print(f"  WARNING: Could not delete {full_path}: {err}", file=sys.stderr)
+            failed_paths.append(file_del.rel_path)
+            continue
+
+        deleted_ids.append(file_del.file_id)
+        deleted_bytes += file_del.file_size
+
+    if deleted_ids:
+        delete_files(conn, deleted_ids)
+        conn.commit()
+
+    return DeletionResult(
+        deleted_count=len(deleted_ids),
+        deleted_bytes=deleted_bytes,
+        failed_count=len(failed_paths),
+        failed_paths=failed_paths,
     )
