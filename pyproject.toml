@@ -1,5 +1,5 @@
 [project]
-name = "raw-deduplicator_v2"
+name = "py-file-deduplication"
 version = "0.0.1"
 description = "A Python CLI application"
 readme = "README.md"
