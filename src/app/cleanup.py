@@ -191,3 +191,65 @@ def compute_folder_stats(duplicate_groups: dict[str, list[DuplicateFile]]) -> li
 
     stats.sort(key=lambda s: (-s.duplicate_count, -s.reclaimable_bytes))
     return stats
+
+
+def plan_deletions(
+    selected_folders: list[str],
+    duplicate_groups: dict[str, list[DuplicateFile]],
+) -> DeletionPlan:
+    """Plan which files to delete based on selected folders.
+
+    For each duplicate group, files in selected folders are marked for
+    deletion. If ALL copies of a group are in selected folders, the
+    alphabetically first copy is protected (last-copy safety).
+
+    Args:
+        selected_folders: List of folder names selected for cleanup.
+        duplicate_groups: Dict mapping group keys to lists of DuplicateFile.
+
+    Returns:
+        A DeletionPlan with files to delete, protected paths, and total bytes.
+    """
+    selected_set: set[str] = set(selected_folders)
+    deletions: list[FileDeletion] = []
+    protected_paths: list[str] = []
+
+    for files in duplicate_groups.values():
+        in_selected: list[DuplicateFile] = [f for f in files if f.folder in selected_set]
+        in_safe: list[DuplicateFile] = [f for f in files if f.folder not in selected_set]
+
+        if not in_selected:
+            continue
+
+        if in_safe:
+            surviving: str = sorted(in_safe, key=lambda f: f.rel_path)[0].rel_path
+            for dup_file in in_selected:
+                deletions.append(
+                    FileDeletion(
+                        file_id=dup_file.file_id,
+                        rel_path=dup_file.rel_path,
+                        file_size=dup_file.file_size,
+                        surviving_copy=surviving,
+                    )
+                )
+        else:
+            sorted_files: list[DuplicateFile] = sorted(in_selected, key=lambda f: f.rel_path)
+            protected_path: str = sorted_files[0].rel_path
+            protected_paths.append(protected_path)
+            for dup_file in sorted_files[1:]:
+                deletions.append(
+                    FileDeletion(
+                        file_id=dup_file.file_id,
+                        rel_path=dup_file.rel_path,
+                        file_size=dup_file.file_size,
+                        surviving_copy=protected_path,
+                    )
+                )
+
+    total_bytes: int = sum(d.file_size for d in deletions)
+
+    return DeletionPlan(
+        deletions=deletions,
+        protected_paths=protected_paths,
+        total_bytes=total_bytes,
+    )

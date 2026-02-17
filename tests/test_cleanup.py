@@ -1,6 +1,14 @@
 """Tests for the cleanup module."""
 
-from app.cleanup import DuplicateFile, FolderStats, build_duplicate_groups, compute_folder_stats
+from app.cleanup import (
+    DeletionPlan,
+    DuplicateFile,
+    FileDeletion,
+    FolderStats,
+    build_duplicate_groups,
+    compute_folder_stats,
+    plan_deletions,
+)
 from app.database import insert_file, open_database, update_hashes
 
 
@@ -150,3 +158,99 @@ class TestComputeFolderStats:
         # Both have 2 dupes, both have 6000 bytes — tied, order is stable
         assert stats[0].duplicate_count == 2
         assert stats[1].duplicate_count == 2
+
+
+class TestPlanDeletions:
+    def test_delete_from_one_folder(self):
+        groups = {
+            "1000_md5_sha": [
+                DuplicateFile(file_id=1, rel_path="originals/a.raw", file_size=1000, group_key="1000_md5_sha", folder="originals"),
+                DuplicateFile(file_id=2, rel_path="backup/a.raw", file_size=1000, group_key="1000_md5_sha", folder="backup"),
+            ]
+        }
+
+        plan = plan_deletions(selected_folders=["backup"], duplicate_groups=groups)
+
+        assert len(plan.deletions) == 1
+        assert plan.deletions[0].file_id == 2
+        assert plan.deletions[0].rel_path == "backup/a.raw"
+        assert plan.deletions[0].surviving_copy == "originals/a.raw"
+        assert len(plan.protected_paths) == 0
+        assert plan.total_bytes == 1000
+
+    def test_no_files_in_selected_folders(self):
+        groups = {
+            "1000_md5_sha": [
+                DuplicateFile(file_id=1, rel_path="a/file.raw", file_size=1000, group_key="1000_md5_sha", folder="a"),
+                DuplicateFile(file_id=2, rel_path="b/file.raw", file_size=1000, group_key="1000_md5_sha", folder="b"),
+            ]
+        }
+
+        plan = plan_deletions(selected_folders=["nonexistent"], duplicate_groups=groups)
+
+        assert len(plan.deletions) == 0
+        assert len(plan.protected_paths) == 0
+        assert plan.total_bytes == 0
+
+    def test_last_copy_protection(self):
+        groups = {
+            "1000_md5_sha": [
+                DuplicateFile(file_id=1, rel_path="a/file.raw", file_size=1000, group_key="1000_md5_sha", folder="a"),
+                DuplicateFile(file_id=2, rel_path="b/file.raw", file_size=1000, group_key="1000_md5_sha", folder="b"),
+            ]
+        }
+
+        plan = plan_deletions(selected_folders=["a", "b"], duplicate_groups=groups)
+
+        # One copy protected (alphabetically first: a/file.raw)
+        assert len(plan.deletions) == 1
+        assert plan.deletions[0].rel_path == "b/file.raw"
+        assert plan.deletions[0].surviving_copy == "a/file.raw"
+        assert len(plan.protected_paths) == 1
+        assert plan.protected_paths[0] == "a/file.raw"
+        assert plan.total_bytes == 1000
+
+    def test_last_copy_protection_three_copies(self):
+        groups = {
+            "1000_md5_sha": [
+                DuplicateFile(file_id=1, rel_path="c/file.raw", file_size=1000, group_key="1000_md5_sha", folder="c"),
+                DuplicateFile(file_id=2, rel_path="a/file.raw", file_size=1000, group_key="1000_md5_sha", folder="a"),
+                DuplicateFile(file_id=3, rel_path="b/file.raw", file_size=1000, group_key="1000_md5_sha", folder="b"),
+            ]
+        }
+
+        plan = plan_deletions(selected_folders=["a", "b", "c"], duplicate_groups=groups)
+
+        # a/file.raw survives (alphabetically first), b and c deleted
+        assert len(plan.deletions) == 2
+        deleted_paths = {d.rel_path for d in plan.deletions}
+        assert deleted_paths == {"b/file.raw", "c/file.raw"}
+        assert plan.protected_paths == ["a/file.raw"]
+        for d in plan.deletions:
+            assert d.surviving_copy == "a/file.raw"
+
+    def test_mixed_safe_and_unsafe_groups(self):
+        groups = {
+            "1000_md5a_shaa": [
+                DuplicateFile(file_id=1, rel_path="safe/a.raw", file_size=1000, group_key="1000_md5a_shaa", folder="safe"),
+                DuplicateFile(file_id=2, rel_path="doomed/a.raw", file_size=1000, group_key="1000_md5a_shaa", folder="doomed"),
+            ],
+            "2000_md5b_shab": [
+                DuplicateFile(file_id=3, rel_path="doomed/b.raw", file_size=2000, group_key="2000_md5b_shab", folder="doomed"),
+                DuplicateFile(file_id=4, rel_path="also_doomed/b.raw", file_size=2000, group_key="2000_md5b_shab", folder="also_doomed"),
+            ],
+        }
+
+        plan = plan_deletions(selected_folders=["doomed", "also_doomed"], duplicate_groups=groups)
+
+        # Group 1: safe/a.raw not selected -> doomed/a.raw deleted, no protection needed
+        # Group 2: all in selected -> one protected (also_doomed/b.raw < doomed/b.raw alphabetically)
+        assert len(plan.deletions) == 2
+        assert len(plan.protected_paths) == 1
+        assert plan.protected_paths[0] == "also_doomed/b.raw"
+
+    def test_empty_groups(self):
+        plan = plan_deletions(selected_folders=["any"], duplicate_groups={})
+        assert len(plan.deletions) == 0
+        assert len(plan.protected_paths) == 0
+        assert plan.total_bytes == 0
